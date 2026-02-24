@@ -11,8 +11,9 @@ overrides, edge cases, error scenarios, and storage-specific settings.
 Source under test: src/app.py  (``create_app`` with configuration loading)
 Fixture data:     tests/fixtures/config_data.py
 
-The ``@pytest.mark.unit`` marker is automatically applied to every test
-function in this file via ``tests/unit/conftest.py`` ``pytestmark``.
+The ``@pytest.mark.unit`` marker is applied at module level via
+``pytestmark`` so that every test is selected when running
+``pytest -m unit``.
 """
 
 import os
@@ -32,6 +33,10 @@ from tests.fixtures.config_data import (
     make_config_with_s3_storage,
     make_config_with_file_storage,
 )
+
+# Module-level marker — ensures every test in this file is selected
+# when running ``pytest -m unit``.
+pytestmark = pytest.mark.unit
 
 
 # =========================================================================
@@ -354,7 +359,7 @@ def test_config_with_extra_unknown_keys():
     assert app.config["ON_STARTUP_HOOK"] is mock_callback
 
 
-def test_config_immutability():
+def test_config_factory_immutability_returns_independent_copies():
     """Each factory invocation returns an independent dictionary instance."""
     config_a = make_testing_config()
     config_b = make_testing_config()
