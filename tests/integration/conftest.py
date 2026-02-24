@@ -442,19 +442,22 @@ def seeded_admin_user(db_session, app):
     User
         The persisted admin user ORM instance.
     """
-    with app.app_context():
-        from src.models.user import User
+    from src.models.user import User
 
-        user_data = make_admin_user(username="integration-admin")
-        # Filter out keys that are not actual User model columns to
-        # prevent unexpected keyword argument errors
-        valid_keys = {
-            k: v for k, v in user_data.items() if hasattr(User, k)
-        }
-        user = User(**valid_keys)
-        db_session.add(user)
-        db_session.flush()
-        return user
+    user_data = make_admin_user(username="integration-admin")
+    # Filter out keys that are not actual User model columns to
+    # prevent unexpected keyword argument errors
+    valid_keys = {
+        k: v for k, v in user_data.items() if hasattr(User, k)
+    }
+    # Parse ISO datetime strings to Python datetime objects for SQLAlchemy
+    for _dk in ("created_at", "updated_at", "last_login"):
+        if _dk in valid_keys and isinstance(valid_keys[_dk], str):
+            valid_keys[_dk] = datetime.fromisoformat(valid_keys[_dk])
+    user = User(**valid_keys)
+    db_session.add(user)
+    db_session.flush()
+    return user
 
 
 @pytest.fixture(scope="function")
@@ -476,17 +479,20 @@ def seeded_developer_user(db_session, app):
     User
         The persisted developer user ORM instance.
     """
-    with app.app_context():
-        from src.models.user import User
+    from src.models.user import User
 
-        user_data = make_developer_user(username="integration-developer")
-        valid_keys = {
-            k: v for k, v in user_data.items() if hasattr(User, k)
-        }
-        user = User(**valid_keys)
-        db_session.add(user)
-        db_session.flush()
-        return user
+    user_data = make_developer_user(username="integration-developer")
+    valid_keys = {
+        k: v for k, v in user_data.items() if hasattr(User, k)
+    }
+    # Parse ISO datetime strings to Python datetime objects for SQLAlchemy
+    for _dk in ("created_at", "updated_at", "last_login"):
+        if _dk in valid_keys and isinstance(valid_keys[_dk], str):
+            valid_keys[_dk] = datetime.fromisoformat(valid_keys[_dk])
+    user = User(**valid_keys)
+    db_session.add(user)
+    db_session.flush()
+    return user
 
 
 @pytest.fixture(scope="function")
@@ -508,17 +514,20 @@ def seeded_readonly_user(db_session, app):
     User
         The persisted read-only user ORM instance.
     """
-    with app.app_context():
-        from src.models.user import User
+    from src.models.user import User
 
-        user_data = make_readonly_user(username="integration-readonly")
-        valid_keys = {
-            k: v for k, v in user_data.items() if hasattr(User, k)
-        }
-        user = User(**valid_keys)
-        db_session.add(user)
-        db_session.flush()
-        return user
+    user_data = make_readonly_user(username="integration-readonly")
+    valid_keys = {
+        k: v for k, v in user_data.items() if hasattr(User, k)
+    }
+    # Parse ISO datetime strings to Python datetime objects for SQLAlchemy
+    for _dk in ("created_at", "updated_at", "last_login"):
+        if _dk in valid_keys and isinstance(valid_keys[_dk], str):
+            valid_keys[_dk] = datetime.fromisoformat(valid_keys[_dk])
+    user = User(**valid_keys)
+    db_session.add(user)
+    db_session.flush()
+    return user
 
 
 @pytest.fixture(scope="function")
@@ -543,24 +552,27 @@ def seeded_repository(db_session, app):
         The persisted repository ORM instance, or the raw data dictionary
         if the Repository model is not yet available.
     """
-    with app.app_context():
-        repo_data = make_hosted_repo(
-            name="integration-test-repo",
-            format_type="maven",
-        )
-        try:
-            from src.models.repository import Repository
+    repo_data = make_hosted_repo(
+        name="integration-test-repo",
+        format_type="maven",
+    )
+    try:
+        from src.models.repository import Repository
 
-            valid_keys = {
-                k: v for k, v in repo_data.items() if hasattr(Repository, k)
-            }
-            repo = Repository(**valid_keys)
-            db_session.add(repo)
-            db_session.flush()
-            return repo
-        except ImportError:
-            # Repository model not yet implemented — return raw dict
-            return repo_data
+        valid_keys = {
+            k: v for k, v in repo_data.items() if hasattr(Repository, k)
+        }
+        # Parse ISO datetime strings to Python datetime objects for SQLAlchemy
+        for _dk in ("created_at", "updated_at"):
+            if _dk in valid_keys and isinstance(valid_keys[_dk], str):
+                valid_keys[_dk] = datetime.fromisoformat(valid_keys[_dk])
+        repo = Repository(**valid_keys)
+        db_session.add(repo)
+        db_session.flush()
+        return repo
+    except ImportError:
+        # Repository model not yet implemented — return raw dict
+        return repo_data
 
 
 @pytest.fixture(scope="function")
@@ -584,41 +596,44 @@ def seeded_repositories(db_session, app):
         Dictionary with keys ``'hosted'``, ``'proxy'``, ``'group'`` mapping
         to their respective repository instances (ORM or dict).
     """
-    with app.app_context():
-        repos = {}
-        factories = {
-            "hosted": lambda: make_hosted_repo(
-                name="integration-hosted-repo", format_type="maven"
-            ),
-            "proxy": lambda: make_proxy_repo(
-                name="integration-proxy-repo", format_type="npm"
-            ),
-            "group": lambda: make_group_repo(
-                name="integration-group-repo", format_type="maven"
-            ),
-        }
+    repos = {}
+    factories = {
+        "hosted": lambda: make_hosted_repo(
+            name="integration-hosted-repo", format_type="maven"
+        ),
+        "proxy": lambda: make_proxy_repo(
+            name="integration-proxy-repo", format_type="npm"
+        ),
+        "group": lambda: make_group_repo(
+            name="integration-group-repo", format_type="maven"
+        ),
+    }
 
-        try:
-            from src.models.repository import Repository
+    try:
+        from src.models.repository import Repository
 
-            for repo_type, factory_fn in factories.items():
-                repo_data = factory_fn()
-                valid_keys = {
-                    k: v
-                    for k, v in repo_data.items()
-                    if hasattr(Repository, k)
-                }
-                repo = Repository(**valid_keys)
-                db_session.add(repo)
-                repos[repo_type] = repo
+        for repo_type, factory_fn in factories.items():
+            repo_data = factory_fn()
+            valid_keys = {
+                k: v
+                for k, v in repo_data.items()
+                if hasattr(Repository, k)
+            }
+            # Parse ISO datetime strings for SQLAlchemy
+            for _dk in ("created_at", "updated_at"):
+                if _dk in valid_keys and isinstance(valid_keys[_dk], str):
+                    valid_keys[_dk] = datetime.fromisoformat(valid_keys[_dk])
+            repo = Repository(**valid_keys)
+            db_session.add(repo)
+            repos[repo_type] = repo
 
-            db_session.flush()
-        except ImportError:
-            # Repository model not yet implemented — return raw dicts
-            for repo_type, factory_fn in factories.items():
-                repos[repo_type] = factory_fn()
+        db_session.flush()
+    except ImportError:
+        # Repository model not yet implemented — return raw dicts
+        for repo_type, factory_fn in factories.items():
+            repos[repo_type] = factory_fn()
 
-        return repos
+    return repos
 
 
 # =========================================================================
