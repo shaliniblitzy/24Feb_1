@@ -28,6 +28,7 @@ import io
 import hashlib
 import os
 import json
+import typing
 import zipfile
 import tarfile
 import datetime
@@ -213,7 +214,7 @@ def make_maven_artifact(
         "artifact_id": artifact_id,
         "version": version,
         "packaging": packaging,
-        "created_at": datetime.datetime.utcnow().isoformat(),
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
 
     return _build_artifact_dict(
@@ -270,7 +271,7 @@ def make_npm_artifact(
     metadata = {
         "name": package_name,
         "version": version,
-        "created_at": datetime.datetime.utcnow().isoformat(),
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
     return _build_artifact_dict(content, "application/gzip", metadata=metadata)
 
@@ -327,7 +328,7 @@ def make_docker_manifest(
         "tag": tag,
         "config_digest": config_digest,
         "layer_digests": [layer_digest],
-        "created_at": datetime.datetime.utcnow().isoformat(),
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
     return _build_artifact_dict(
         content,
@@ -417,7 +418,7 @@ def make_nuget_artifact(
     metadata = {
         "package_id": package_id,
         "version": version,
-        "created_at": datetime.datetime.utcnow().isoformat(),
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
     return _build_artifact_dict(content, "application/zip", metadata=metadata)
 
@@ -495,7 +496,7 @@ def make_pypi_artifact(
         "name": package_name,
         "version": version,
         "format": dist_format,
-        "created_at": datetime.datetime.utcnow().isoformat(),
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
     return _build_artifact_dict(content, ct, metadata=metadata)
 
@@ -597,7 +598,7 @@ def make_apt_artifact(
         "package_name": package_name,
         "version": version,
         "architecture": architecture,
-        "created_at": datetime.datetime.utcnow().isoformat(),
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
     return _build_artifact_dict(
         content,
@@ -637,10 +638,10 @@ def make_raw_artifact(
 # ===================================================================
 
 # Map of format name → generator callable (populated lazily below)
-_FORMAT_GENERATORS: dict[str, callable] = {}
+_FORMAT_GENERATORS: dict[str, typing.Callable] = {}
 
 
-def _get_format_generators() -> dict[str, callable]:
+def _get_format_generators() -> dict[str, typing.Callable]:
     """Return the format→generator mapping, building it on first call."""
     if not _FORMAT_GENERATORS:
         _FORMAT_GENERATORS.update({

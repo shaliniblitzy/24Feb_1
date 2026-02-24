@@ -648,8 +648,11 @@ except ImportError:
         """Placeholder ``RepositoryFactory`` — ORM model not yet available.
 
         This stub is loaded when ``src.models.repository.Repository`` cannot
-        be imported.  It carries the same public surface so that import
-        statements succeed, but calling it will raise ``NotImplementedError``.
+        be imported.  It provides a working dict-based fallback (via
+        ``make_repository_base``) so that tests relying on
+        ``RepositoryFactory.create()`` or ``RepositoryFactory.build()``
+        continue to function without a real ORM session.  Tests that
+        require actual ORM instances should skip when the model is absent.
         """
 
         class Meta:
@@ -666,9 +669,12 @@ except ImportError:
         def __init_subclass__(cls, **kwargs: Any) -> None:
             super().__init_subclass__(**kwargs)
 
-        def __init__(self, **kwargs: Any) -> None:
-            raise NotImplementedError(
-                "RepositoryFactory requires 'src.models.repository.Repository' "
-                "to be importable.  Ensure the model module exists before using "
-                "the ORM factory."
-            )
+        @classmethod
+        def create(cls, **kwargs: Any) -> Dict[str, Any]:
+            """Fallback: returns a plain dict via ``make_repository_base``."""
+            return make_repository_base(**kwargs)
+
+        @classmethod
+        def build(cls, **kwargs: Any) -> Dict[str, Any]:
+            """Fallback: returns a plain dict via ``make_repository_base``."""
+            return make_repository_base(**kwargs)

@@ -24,7 +24,7 @@ Typical usage::
 import copy
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -150,7 +150,7 @@ class CapturedEmail:
     html_body: Optional[str] = None
     attachments: List[Dict[str, Any]] = field(default_factory=list)
     headers: Dict[str, str] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass
@@ -166,7 +166,7 @@ class CapturedWebhook:
     payload: Dict[str, Any]
     headers: Dict[str, str] = field(default_factory=dict)
     content_type: str = "application/json"
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     retry_count: int = 0
 
 
@@ -182,7 +182,7 @@ class CapturedAlert:
     message: str
     details: Optional[Dict[str, Any]] = None
     source: str = ""
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +318,7 @@ class MockEmailService:
             html_body=html_body,
             attachments=list(resolved_attachments),
             headers=dict(resolved_headers),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
         self._sent_emails.append(captured)
 
@@ -381,7 +381,7 @@ class MockEmailService:
             payload=copy.deepcopy(payload),
             headers=dict(resolved_headers),
             content_type=content_type,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             retry_count=retry_count,
         )
         self._sent_webhooks.append(captured)
@@ -437,7 +437,7 @@ class MockEmailService:
             message=message,
             details=copy.deepcopy(details) if details else None,
             source=source,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
         self._sent_alerts.append(captured)
 
@@ -832,7 +832,7 @@ class MockEmailService:
                 "method": method_name,
                 "args": (),
                 "kwargs": dict(kwargs),
-                "timestamp": datetime.utcnow(),
+                "timestamp": datetime.now(timezone.utc),
             }
         )
 

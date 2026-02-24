@@ -32,7 +32,7 @@ Typical usage::
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timezone
 from copy import deepcopy
 import json
 import hashlib
@@ -492,7 +492,7 @@ class MockProxyClient:
             "method": method,
             "url": url,
             "kwargs": deepcopy(kwargs),
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(timezone.utc),
         }
         self._call_log.append(log_entry)
         self._request_count += 1
@@ -705,7 +705,7 @@ def make_maven_metadata_response(
         "    <versions>\n"
         f"{version_elements}\n"
         "    </versions>\n"
-        f"    <lastUpdated>{datetime.utcnow().strftime('%Y%m%d%H%M%S')}</lastUpdated>\n"
+        f"    <lastUpdated>{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}</lastUpdated>\n"
         "  </versioning>\n"
         "</metadata>\n"
     )

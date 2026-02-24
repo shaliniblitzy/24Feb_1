@@ -192,7 +192,7 @@ class MockS3Client:
             'method': method,
             'args': args or {},
             'kwargs': kwargs or {},
-            'timestamp': datetime.datetime.utcnow(),
+            'timestamp': datetime.datetime.now(datetime.timezone.utc),
         })
 
     def _check_error(self, method_name: str) -> None:
@@ -305,7 +305,7 @@ class MockS3Client:
 
         data = self._read_body(Body)
         etag = self._compute_etag(data)
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(datetime.timezone.utc)
 
         self._buckets[Bucket][Key] = {
             'Body': data,

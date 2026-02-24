@@ -349,7 +349,7 @@ def admin_user(db_session, app: Flask) -> Generator[User, None, None]:
     User
         The persisted admin user ORM instance.
     """
-    now: datetime.datetime = datetime.datetime.utcnow()
+    now: datetime.datetime = datetime.datetime.now(datetime.timezone.utc)
     user: User = User(
         id="admin-test-user-id",
         username="test-admin",
@@ -388,7 +388,7 @@ def developer_user(db_session, app: Flask) -> Generator[User, None, None]:
     User
         The persisted developer user ORM instance.
     """
-    now: datetime.datetime = datetime.datetime.utcnow()
+    now: datetime.datetime = datetime.datetime.now(datetime.timezone.utc)
     user: User = User(
         id="developer-test-user-id",
         username="test-developer",
@@ -427,7 +427,7 @@ def readonly_user(db_session, app: Flask) -> Generator[User, None, None]:
     User
         The persisted read-only user ORM instance.
     """
-    now: datetime.datetime = datetime.datetime.utcnow()
+    now: datetime.datetime = datetime.datetime.now(datetime.timezone.utc)
     user: User = User(
         id="readonly-test-user-id",
         username="test-readonly",

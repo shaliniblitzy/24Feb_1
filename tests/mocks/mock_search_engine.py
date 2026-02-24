@@ -191,7 +191,7 @@ class MockSearchEngine:
                 "method": method,
                 "args": args,
                 "kwargs": kwargs,
-                "timestamp": datetime.datetime.utcnow(),
+                "timestamp": datetime.datetime.now(datetime.timezone.utc),
             }
         )
 
@@ -495,7 +495,7 @@ class MockSearchEngine:
             doc_id = uuid.uuid4().hex
 
         stored_doc = copy.deepcopy(document)
-        stored_doc["_indexed_at"] = datetime.datetime.utcnow().isoformat()
+        stored_doc["_indexed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         # Determine if this is a create or update
         result = "updated" if doc_id in self._indices[index_name] else "created"

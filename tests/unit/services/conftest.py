@@ -639,7 +639,7 @@ def audit_service(mock_db_session: MagicMock) -> Any:
         service.log_event.return_value = MagicMock(
             name="AuditEvent",
             event_id="audit-001",
-            timestamp=datetime.datetime.utcnow().isoformat(),
+            timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         )
         service.get_events.return_value = MagicMock(
             name="AuditEventList", items=[], total=0,
@@ -899,7 +899,7 @@ def mock_repository_model() -> MagicMock:
     MagicMock
         A mock simulating a Repository ORM model instance.
     """
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     model = MagicMock(name="MockRepositoryModel")
     model.id = str(uuid.uuid4())
     model.name = "test-maven-hosted"
@@ -944,7 +944,7 @@ def mock_user_model() -> MagicMock:
     MagicMock
         A mock simulating a User ORM model instance.
     """
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     model = MagicMock(name="MockUserModel")
     model.id = str(uuid.uuid4())
     model.username = "test-developer"
