@@ -1,11 +1,45 @@
 """
-Security package for the Nexus Repository Flask application.
+SSL/TLS Certificate Management Package.
 
-Provides SSL/TLS certificate management and cryptographic operations
-(Feature F-302). Replaces BouncyCastle 1.78.1 from the Java source.
+This package implements Feature F-302 (SSL/TLS Support) for the Nexus Repository
+Flask application. It replaces BouncyCastle 1.78.1 and Java's javax.net.ssl
+infrastructure from the original Java source system.
 
 Modules:
-- ``crypto_utils.py``:       Cryptographic operations (RSA, AES-GCM, HMAC, PBKDF2)
-- ``ssl_manager.py``:        SSL/TLS configuration management (future checkpoint)
-- ``certificate_store.py``:  Certificate storage and retrieval (future checkpoint)
+- ssl_manager: SSL/TLS configuration management (TLS versions, cipher suites, keystores)
+- certificate_store: Certificate storage, import/export, and expiration monitoring
+- crypto_utils: Cryptographic utility functions (hashing, key generation, CSR, HMAC)
+
+Primary dependency: cryptography 44.0.0 (PyPI)
 """
+
+from src.app.security.crypto_utils import (
+    generate_random_bytes,
+    compute_hash,
+    compute_hmac,
+    generate_rsa_key_pair,
+    generate_ec_key_pair,
+    generate_csr,
+)
+from src.app.security.certificate_store import CertificateStore
+
+# SSLManager and SSLConfig will be available once ssl_manager.py is created.
+# Import them conditionally to avoid ImportError during incremental build.
+try:
+    from src.app.security.ssl_manager import SSLManager, SSLConfig  # noqa: F401
+except ImportError:
+    SSLManager = None  # type: ignore[assignment,misc]
+    SSLConfig = None  # type: ignore[assignment,misc]
+
+
+__all__ = [
+    "SSLManager",
+    "SSLConfig",
+    "CertificateStore",
+    "generate_random_bytes",
+    "compute_hash",
+    "compute_hmac",
+    "generate_rsa_key_pair",
+    "generate_ec_key_pair",
+    "generate_csr",
+]
