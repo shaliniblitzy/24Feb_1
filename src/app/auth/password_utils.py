@@ -39,7 +39,7 @@ import logging
 import os
 import re
 import secrets
-from typing import List, Optional, Tuple
+
 
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.exceptions import InvalidKey
@@ -201,7 +201,7 @@ def _hash_bcrypt(password: str) -> str:
 
 def _hash_scrypt(
     password: str,
-    salt: Optional[bytes] = None,
+    salt: bytes | None = None,
     n: int = SCRYPT_N,
     r: int = SCRYPT_R,
     p: int = SCRYPT_P,
@@ -387,7 +387,7 @@ def validate_password_strength(
     require_lowercase: bool = True,
     require_digit: bool = True,
     require_special: bool = True,
-) -> Tuple[bool, List[str]]:
+) -> tuple[bool, list[str]]:
     """Validate a password against configurable strength rules.
 
     Parameters
@@ -407,14 +407,14 @@ def validate_password_strength(
 
     Returns
     -------
-    Tuple[bool, List[str]]
+    tuple[bool, list[str]]
         A two-element tuple ``(is_valid, violations)`` where
         *is_valid* is ``True`` when no violations are found and
         *violations* is an ordered list of human-readable failure
         messages.
     """
 
-    violations: List[str] = []
+    violations: list[str] = []
 
     if len(password) < min_length:
         violations.append(
@@ -606,7 +606,7 @@ def needs_rehash(password_hash: str) -> bool:
     return False
 
 
-def _extract_bcrypt_cost(password_hash: str) -> Optional[int]:
+def _extract_bcrypt_cost(password_hash: str) -> int | None:
     """Extract the cost (log-rounds) factor from a bcrypt hash string.
 
     bcrypt format: ``$2b$<cost>$<salt+hash>``

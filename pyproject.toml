@@ -20,14 +20,14 @@ build-backend = "setuptools.build_meta"
 # -----------------------------------------------------------------------------
 # Project Metadata
 # Core project identity matching the Sonatype Nexus Repository product.
-# License: Eclipse Public License 1.0 (same as original Java project).
+# License: Eclipse Public License 2.0 (same as original Java project).
 # -----------------------------------------------------------------------------
 [project]
 name = "nexus-repository"
 version = "1.0.0"
 description = "Sonatype Nexus Repository Manager - Python/Flask Backend"
 readme = "README.md"
-license = {text = "EPL-1.0"}
+license = {text = "EPL-2.0"}
 requires-python = ">=3.12"
 authors = [
     {name = "Nexus Repository Team"},
@@ -37,7 +37,7 @@ classifiers = [
     "Framework :: Flask",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: Eclipse Public License 1.0 (EPL-1.0)",
+    "License :: OSI Approved :: Eclipse Public License 2.0 (EPL-2.0)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -86,6 +86,10 @@ dependencies = [
     "Flask-HTTPAuth==4.8.0",
     "cryptography==44.0.0",
     "python-ldap==3.4.4",
+    "bcrypt==4.2.1",
+
+    # XML Security (defense-in-depth for Maven metadata parsing)
+    "defusedxml==0.7.1",
 
     # Search (Elasticsearch integration for content indexing)
     "elasticsearch==7.17.12",
@@ -104,6 +108,9 @@ dependencies = [
     # HTTP and Networking (proxy repository fetches + CORS)
     "requests==2.32.3",
     "Flask-CORS==5.0.0",
+
+    # Structured JSON logging for SIEM integration (replaces SLF4J + Logback)
+    "python-json-logger==2.0.7",
 
     # Configuration (twelve-factor app environment variable loading)
     "python-dotenv==1.0.1",

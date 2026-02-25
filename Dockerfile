@@ -115,7 +115,7 @@ RUN mkdir -p /app/data/blobs /app/data/tmp /app/logs && \
 # Runtime Environment Variables
 # ---------------------------------------------------------------------------
 # FLASK_APP:        Flask application entry point (Gunicorn and Flask CLI)
-# FLASK_ENV:        Production mode (disables debug, enables optimizations)
+# FLASK_DEBUG:      Disabled in production (0 = off, 1 = on)
 # GUNICORN_BIND:    Default bind address (all interfaces, port 8000)
 # GUNICORN_WORKERS: Number of Gunicorn worker processes
 # GUNICORN_TIMEOUT: Worker timeout — generous for large artifact uploads
@@ -123,7 +123,7 @@ RUN mkdir -p /app/data/blobs /app/data/tmp /app/logs && \
 # BLOBSTORE_TYPE:   Default storage backend (file or s3)
 # BLOBSTORE_PATH:   Local filesystem BlobStore path (F-201)
 ENV FLASK_APP=wsgi:app \
-    FLASK_ENV=production \
+    FLASK_DEBUG=0 \
     GUNICORN_BIND=0.0.0.0:8000 \
     GUNICORN_WORKERS=4 \
     GUNICORN_TIMEOUT=120 \

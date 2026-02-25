@@ -188,13 +188,9 @@ setup(
 
     # -----------------------------------------------------------------------
     # Console Script Entry Points
-    # Provides a ``nexus-repo`` CLI command that launches the application.
+    # Entry points will be added when the CLI module is implemented.
     # -----------------------------------------------------------------------
-    entry_points={
-        "console_scripts": [
-            "nexus-repo=app.cli:main",
-        ],
-    },
+    entry_points={},
 
     # -----------------------------------------------------------------------
     # Package Classifiers (PyPI Trove Classifiers)
@@ -205,7 +201,7 @@ setup(
         "Framework :: Flask",
         "Intended Audience :: Developers",
         "Intended Audience :: System Administrators",
-        "License :: OSI Approved :: Eclipse Public License 1.0 (EPL-1.0)",
+        "License :: OSI Approved :: Eclipse Public License 2.0 (EPL-2.0)",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.12",
@@ -216,7 +212,7 @@ setup(
     # -----------------------------------------------------------------------
     # Additional Package Metadata
     # -----------------------------------------------------------------------
-    license="EPL-1.0",
+    license="EPL-2.0",
     keywords=[
         "nexus",
         "repository",

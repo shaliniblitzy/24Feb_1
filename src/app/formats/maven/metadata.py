@@ -18,7 +18,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
-from xml.etree import ElementTree
+import defusedxml.ElementTree as DefusedET
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 logger = logging.getLogger(__name__)
@@ -383,7 +383,7 @@ def detect_metadata_level(xml_bytes: bytes) -> str:
     Raises:
         xml.etree.ElementTree.ParseError: If the XML is malformed.
     """
-    root = ElementTree.fromstring(xml_bytes)
+    root = DefusedET.fromstring(xml_bytes)
     version_text = _find_text(root, 'version')
     artifact_id_text = _find_text(root, 'artifactId')
 
@@ -419,7 +419,7 @@ def parse_metadata_xml(xml_bytes: bytes) -> dict[str, Any]:
         - ``snapshot_versions`` (list[dict])
         - ``level`` ('group' | 'artifact' | 'snapshot')
     """
-    root = ElementTree.fromstring(xml_bytes)
+    root = DefusedET.fromstring(xml_bytes)
 
     group_id: str = _find_text(root, 'groupId') or ''
     artifact_id: str | None = _find_text(root, 'artifactId')
@@ -737,7 +737,7 @@ def merge_metadata(metadata_list: list[bytes]) -> bytes | None:
             parsed = parse_metadata_xml(raw_xml)
             parsed_items.append(parsed)
             raw_indices.append(idx)
-        except ElementTree.ParseError:
+        except DefusedET.ParseError:
             logger.warning(
                 'Skipping unparseable maven-metadata.xml at index %d during merge',
                 idx,

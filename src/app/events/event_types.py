@@ -24,9 +24,8 @@ dependencies — this is the most foundational module in the events package.
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional, Type, Union
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +99,7 @@ class EventType(str, Enum):
 # Event Payload Dataclasses
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(frozen=True)
 class RepositoryEventPayload:
     """Payload schema for repository lifecycle events
     (REPOSITORY_CREATED, REPOSITORY_UPDATED, REPOSITORY_DELETED).
@@ -119,12 +118,12 @@ class RepositoryEventPayload:
     repository_name: str
     format: str
     type: str
-    user_id: Optional[str] = None
-    ip_address: Optional[str] = None
-    attributes: Dict[str, Any] = field(default_factory=dict)
+    user_id: str | None = None
+    ip_address: str | None = None
+    attributes: tuple[tuple[str, object], ...] = ()
 
 
-@dataclass
+@dataclass(frozen=True)
 class ComponentEventPayload:
     """Payload schema for component upload/delete events
     (COMPONENT_UPLOADED, COMPONENT_DELETED).
@@ -142,15 +141,15 @@ class ComponentEventPayload:
 
     repository_name: str
     component_name: str
-    component_version: Optional[str] = None
-    namespace: Optional[str] = None
+    component_version: str | None = None
+    namespace: str | None = None
     format: str = ""
-    user_id: Optional[str] = None
-    ip_address: Optional[str] = None
-    attributes: Dict[str, Any] = field(default_factory=dict)
+    user_id: str | None = None
+    ip_address: str | None = None
+    attributes: tuple[tuple[str, object], ...] = ()
 
 
-@dataclass
+@dataclass(frozen=True)
 class AssetEventPayload:
     """Payload schema for asset download events (ASSET_DOWNLOADED).
 
@@ -165,13 +164,13 @@ class AssetEventPayload:
 
     repository_name: str
     asset_path: str
-    content_type: Optional[str] = None
-    size: Optional[int] = None
-    user_id: Optional[str] = None
-    ip_address: Optional[str] = None
+    content_type: str | None = None
+    size: int | None = None
+    user_id: str | None = None
+    ip_address: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class SecurityEventPayload:
     """Payload schema for authentication/authorization events
     (USER_AUTHENTICATED, USER_AUTHORIZATION_FAILED).
@@ -188,15 +187,15 @@ class SecurityEventPayload:
         action: Action being attempted for authorization events (optional).
     """
 
-    user_id: Optional[str] = None
-    realm: Optional[str] = None
-    ip_address: Optional[str] = None
-    reason: Optional[str] = None
-    resource: Optional[str] = None
-    action: Optional[str] = None
+    user_id: str | None = None
+    realm: str | None = None
+    ip_address: str | None = None
+    reason: str | None = None
+    resource: str | None = None
+    action: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigEventPayload:
     """Payload schema for configuration change events (CONFIG_CHANGED).
 
@@ -211,14 +210,14 @@ class ConfigEventPayload:
     """
 
     key: str
-    old_value: Optional[str] = None
-    new_value: Optional[str] = None
-    category: Optional[str] = None
-    user_id: Optional[str] = None
-    ip_address: Optional[str] = None
+    old_value: str | None = None
+    new_value: str | None = None
+    category: str | None = None
+    user_id: str | None = None
+    ip_address: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class TaskEventPayload:
     """Payload schema for scheduled task events
     (TASK_STARTED, TASK_COMPLETED).
@@ -239,13 +238,13 @@ class TaskEventPayload:
     task_id: str
     task_type: str
     task_name: str
-    status: Optional[str] = None
-    duration_ms: Optional[int] = None
-    error_message: Optional[str] = None
-    user_id: Optional[str] = None
+    status: str | None = None
+    duration_ms: int | None = None
+    error_message: str | None = None
+    user_id: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class BlobStoreEventPayload:
     """Payload schema for BlobStore maintenance events
     (BLOBSTORE_COMPACTED).
@@ -263,10 +262,10 @@ class BlobStoreEventPayload:
     operation: str
     blobs_removed: int = 0
     space_reclaimed_bytes: int = 0
-    duration_ms: Optional[int] = None
+    duration_ms: int | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class CleanupEventPayload:
     """Payload schema for cleanup completion events (CLEANUP_COMPLETED).
 
@@ -281,18 +280,18 @@ class CleanupEventPayload:
     """
 
     policy_name: str
-    repository_name: Optional[str] = None
+    repository_name: str | None = None
     components_deleted: int = 0
     assets_deleted: int = 0
     space_reclaimed_bytes: int = 0
-    duration_ms: Optional[int] = None
+    duration_ms: int | None = None
 
 
 # ---------------------------------------------------------------------------
 # Event Type → Payload Schema Mapping
 # ---------------------------------------------------------------------------
 
-EVENT_PAYLOAD_SCHEMAS: Dict[EventType, Type] = {
+EVENT_PAYLOAD_SCHEMAS: dict[EventType, type] = {
     EventType.REPOSITORY_CREATED: RepositoryEventPayload,
     EventType.REPOSITORY_UPDATED: RepositoryEventPayload,
     EventType.REPOSITORY_DELETED: RepositoryEventPayload,
@@ -318,7 +317,7 @@ Used for optional payload validation and API documentation.  Every entry in
 # Event Type → Domain Mapping
 # ---------------------------------------------------------------------------
 
-EVENT_DOMAINS: Dict[EventType, str] = {
+EVENT_DOMAINS: dict[EventType, str] = {
     EventType.REPOSITORY_CREATED: "repository",
     EventType.REPOSITORY_UPDATED: "repository",
     EventType.REPOSITORY_DELETED: "repository",
@@ -344,7 +343,7 @@ event domain.
 # Utility Functions
 # ---------------------------------------------------------------------------
 
-def get_payload_schema(event_type: EventType) -> Optional[Type]:
+def get_payload_schema(event_type: EventType) -> type | None:
     """Return the expected payload dataclass for *event_type*.
 
     Args:
@@ -357,7 +356,7 @@ def get_payload_schema(event_type: EventType) -> Optional[Type]:
     return EVENT_PAYLOAD_SCHEMAS.get(event_type)
 
 
-def validate_payload(event_type: EventType, payload: Dict[str, Any]) -> bool:
+def validate_payload(event_type: EventType, payload: dict[str, object]) -> bool:
     """Optionally validate that *payload* contains all required fields for
     *event_type*.
 
@@ -392,7 +391,7 @@ def validate_payload(event_type: EventType, payload: Dict[str, Any]) -> bool:
     return True
 
 
-def get_event_domain(event_type: Union[EventType, str]) -> str:
+def get_event_domain(event_type: EventType | str) -> str:
     """Return the logical domain string for *event_type*.
 
     If *event_type* is a plain string it is first converted to an

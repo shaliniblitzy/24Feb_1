@@ -30,11 +30,9 @@ True
 from __future__ import annotations
 
 import base64
-import hashlib
 import hmac
 import logging
 import os
-from typing import Union
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.hmac import HMAC as CryptoHMAC

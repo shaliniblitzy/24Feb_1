@@ -7,10 +7,8 @@
 # WSGI application entry point
 FLASK_APP=wsgi:app
 
-# Default to development environment
-FLASK_ENV=development
-
 # Enable debug mode and auto-reloader for development
+# Note: FLASK_ENV was removed in Flask 2.3+; use FLASK_DEBUG instead.
 FLASK_DEBUG=1
 
 # Listen on all interfaces (required for Docker containers)

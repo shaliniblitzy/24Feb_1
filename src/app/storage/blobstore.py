@@ -17,8 +17,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from io import BytesIO
-from typing import BinaryIO, Optional, Dict, Any, Iterator
+from collections.abc import Iterator
+from typing import Any, BinaryIO
 
 # Module-level logger for storage operations
 logger = logging.getLogger(__name__)
@@ -218,11 +218,11 @@ class BlobAttributes:
     creation_time: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
-    headers: Dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)
 
     # -- Serialisation helpers ----------------------------------------------
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize all fields to a flat dictionary suitable for persistence.
 
         The ``creation_time`` field is formatted as an ISO-8601 string.
@@ -241,7 +241,7 @@ class BlobAttributes:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> BlobAttributes:
+    def from_dict(cls, data: dict[str, Any]) -> BlobAttributes:
         """Deserialize a ``BlobAttributes`` instance from a dictionary.
 
         Handles both ISO-8601 string and ``datetime`` objects for the
@@ -296,7 +296,7 @@ class Blob:
     blob_id: BlobId
     attributes: BlobAttributes
     soft_deleted: bool = False
-    deleted_at: Optional[datetime] = None
+    deleted_at: datetime | None = None
 
     # -- Convenience properties ---------------------------------------------
 
@@ -374,7 +374,7 @@ class BlobStoreMetrics:
 
     # -- Serialisation -------------------------------------------------------
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize metrics to a dictionary for API responses and logging.
 
         Returns:
@@ -417,7 +417,7 @@ class BlobStoreConfiguration:
 
     name: str
     store_type: BlobStoreType
-    config: Dict[str, Any] = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
 
     # -- Helper properties for common config keys ---------------------------
 
@@ -447,7 +447,7 @@ class BlobStoreConfiguration:
 # ---------------------------------------------------------------------------
 
 
-def compute_checksums(data: bytes | BinaryIO) -> Dict[str, str]:
+def compute_checksums(data: bytes | BinaryIO) -> dict[str, str]:
     """Compute SHA-1, SHA-256, and MD5 checksums for the given data.
 
     This is a **module-level** convenience function that can be called
@@ -572,10 +572,10 @@ class BlobStore(ABC):
     @abstractmethod
     def create(
         self,
-        blob_id: Optional[BlobId],
+        blob_id: BlobId | None,
         data: bytes | BinaryIO,
         content_type: str = 'application/octet-stream',
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
     ) -> Blob:
         """Store binary data as a new blob.
 
@@ -604,7 +604,7 @@ class BlobStore(ABC):
         ...
 
     @abstractmethod
-    def get(self, blob_id: BlobId) -> Optional[Blob]:
+    def get(self, blob_id: BlobId) -> Blob | None:
         """Retrieve blob metadata by identifier.
 
         Returns ``None`` if the blob does not exist.  Soft-deleted blobs
@@ -619,7 +619,7 @@ class BlobStore(ABC):
         ...
 
     @abstractmethod
-    def get_stream(self, blob_id: BlobId) -> Optional[BinaryIO]:
+    def get_stream(self, blob_id: BlobId) -> BinaryIO | None:
         """Retrieve blob content as a binary stream.
 
         Returns ``None`` if the blob does not exist.  **The caller is
@@ -723,7 +723,7 @@ class BlobStore(ABC):
 
     # -- Concrete Utility Methods -------------------------------------------
 
-    def compute_checksums(self, data: bytes | BinaryIO) -> Dict[str, str]:
+    def compute_checksums(self, data: bytes | BinaryIO) -> dict[str, str]:
         """Compute SHA-1, SHA-256, and MD5 checksums for the given data.
 
         Delegates to the module-level :func:`compute_checksums` function.

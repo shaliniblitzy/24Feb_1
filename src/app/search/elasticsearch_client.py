@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import os
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from elasticsearch import (
     Elasticsearch,
@@ -61,7 +61,7 @@ DEFAULT_RETRY_ON_TIMEOUT: bool = True
 # Module-level singleton state — only one ElasticsearchClient wrapper exists
 # per application process.
 # ---------------------------------------------------------------------------
-_es_client: Optional["ElasticsearchClient"] = None
+_es_client: "ElasticsearchClient" | None = None
 _is_initialized: bool = False
 
 
@@ -90,7 +90,7 @@ class ElasticsearchClient:
         ``sniff_on_connection_fail``.
     """
 
-    def __init__(self, url: Optional[str] = None, **kwargs: Any) -> None:
+    def __init__(self, url: str | None = None, **kwargs: Any) -> None:
         # Resolve the Elasticsearch URL from the parameter, environment, or
         # default constant — in that priority order.
         resolved_url: str = url or os.environ.get(
@@ -360,7 +360,7 @@ def init_elasticsearch(app: Any = None) -> ElasticsearchClient:
     return _es_client
 
 
-def get_es_client() -> Optional[Elasticsearch]:
+def get_es_client() -> Elasticsearch | None:
     """Return the raw ``elasticsearch-py`` client from the singleton, or
     ``None`` if the singleton has not been initialised or is not connected.
 
@@ -373,7 +373,7 @@ def get_es_client() -> Optional[Elasticsearch]:
     return None
 
 
-def get_es_wrapper() -> Optional[ElasticsearchClient]:
+def get_es_wrapper() -> ElasticsearchClient | None:
     """Return the :class:`ElasticsearchClient` wrapper instance, or ``None``
     if the singleton has not been initialised.
 

@@ -32,9 +32,9 @@ services:
     environment:
       # Flask application settings
       FLASK_APP: "wsgi:app"
-      FLASK_ENV: "production"
+      FLASK_DEBUG: "0"
       # Database connection (PostgreSQL via SQLAlchemy, replaces MyBatis 3.5.15 + HikariCP 4.0.3)
-      DATABASE_URL: "postgresql://nexus:nexus@postgres:5432/nexus"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}"
       DATABASE_POOL_SIZE: "10"
       DATABASE_MAX_OVERFLOW: "20"
       DATABASE_POOL_TIMEOUT: "30"
@@ -96,9 +96,9 @@ services:
     ports:
       - "5432:5432"  # Exposed for debugging; remove or restrict in production
     environment:
-      POSTGRES_USER: "nexus"
-      POSTGRES_PASSWORD: "nexus"
-      POSTGRES_DB: "nexus"
+      POSTGRES_USER: "${POSTGRES_USER:-nexus}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme}"
+      POSTGRES_DB: "${POSTGRES_DB:-nexus}"
       PGDATA: "/var/lib/postgresql/data/pgdata"
     volumes:
       - postgres_data:/var/lib/postgresql/data
