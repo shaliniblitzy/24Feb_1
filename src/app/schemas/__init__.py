@@ -22,6 +22,10 @@ from src.app.schemas.repository import (  # noqa: F401
 )
 from src.app.schemas.asset import AssetSchema  # noqa: F401
 from src.app.schemas.system import SystemConfigSchema  # noqa: F401
+from src.app.schemas.role import (  # noqa: F401
+    RoleSchema,
+    RoleAssignmentSchema,
+)
 from src.app.schemas.task import (  # noqa: F401
     TaskCreateSchema,
     TaskDefinitionSchema,
