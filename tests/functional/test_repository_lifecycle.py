@@ -320,10 +320,8 @@ def test_repository_cleanup_policy_application(
         art = make_maven_artifact(group_id=f"com.cleanup.t{i}",
                                   artifact_id=f"cl-art-{i}", version="1.0.0")
         upload_test_artifact(created["name"], artifact_data=art)
-    with patch("src.services.scheduler_service.datetime") as mock_dt:
-        mock_dt.now.return_value = MagicMock()
-        resp = client.post(f"/api/v1/repositories/{created['name']}/cleanup",
-                           headers=auth_headers)
+    resp = client.post(f"/api/v1/repositories/{created['name']}/cleanup",
+                       headers=auth_headers)
     assert resp.status_code in (200, 202, 204)
     assert resp.status_code >= 200
 

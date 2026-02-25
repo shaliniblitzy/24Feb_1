@@ -354,14 +354,13 @@ class TestAuthWithMockedDependencies:
         # Arrange: mock_search provides an in-memory search backend
         assert mock_search is not None, "MockSearchEngine fixture must be available"
 
-        # Act: authenticated search request
-        with patch("src.services.search_service.SearchService") as mock_svc:
-            mock_svc.return_value = MagicMock()
-            resp = client.get(
-                SEARCH_URL,
-                query_string={"q": "test-artifact"},
-                headers=auth_headers,
-            )
+        # Act: authenticated search request (search_service module may not
+        # exist yet in this greenfield project, so we skip the patch)
+        resp = client.get(
+            SEARCH_URL,
+            query_string={"q": "test-artifact"},
+            headers=auth_headers,
+        )
 
         # Assert
         assert resp.status_code in (200, 404, 500), (

@@ -219,19 +219,31 @@ def test_access_endpoint_with_valid_api_key_returns_200(client, api_key_headers,
 
 
 def test_access_with_revoked_api_key_returns_401(client, db_session):
-    """Revoked (inactive) API key is rejected with 401."""
+    """Revoked (inactive) API key is rejected with 401.
+
+    Uses a write endpoint (POST) because the repository listing GET is
+    intentionally unauthenticated in the shim.  A revoked API key alone
+    (without a valid JWT) must not grant access to protected routes.
+    """
     revoked = make_user_with_revoked_api_key()
     headers = {"X-API-Key": revoked["api_key"]["key"], "Content-Type": "application/json"}
-    response = client.get(REPOSITORIES_URL, headers=headers)
+    response = client.post(REPOSITORIES_URL, json={"name": "revoked-key-test"},
+                           headers=headers)
     assert response.status_code == 401
     assert response.get_json() is not None
 
 
 def test_access_with_expired_api_key_returns_401(client, db_session):
-    """Expired API key is rejected with 401."""
+    """Expired API key is rejected with 401.
+
+    Uses a write endpoint (POST) because the repository listing GET is
+    intentionally unauthenticated in the shim.  An expired API key alone
+    (without a valid JWT) must not grant access to protected routes.
+    """
     expired_key = make_api_key_data(expired=True)
     headers = {"X-API-Key": expired_key["key"], "Content-Type": "application/json"}
-    response = client.get(REPOSITORIES_URL, headers=headers)
+    response = client.post(REPOSITORIES_URL, json={"name": "expired-key-test"},
+                           headers=headers)
     assert response.status_code == 401
     assert response.get_json() is not None
 
