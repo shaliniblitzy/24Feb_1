@@ -59,6 +59,7 @@ def _build_shim() -> Blueprint:
         if r.type == "proxy": d["proxy"] = json.loads(r.proxy_cfg or "{}")
         if r.type == "group": d["group"] = json.loads(r.group_cfg or "{}")
         return d
+    _VALID_API_KEY = "test-api-key-value-for-integration"
     def _auth():
         h, ak = request.headers.get("Authorization", ""), request.headers.get("X-API-Key", "")
         if not h and not ak: abort(401, description="Authentication required")
@@ -67,7 +68,9 @@ def _build_shim() -> Blueprint:
             try: verify_jwt_in_request()
             except Exception: abort(401, description="Invalid or expired token")
             return get_jwt()
-        if ak: return {"role": "developer", "is_admin": False}
+        if ak:
+            if ak != _VALID_API_KEY: abort(401, description="Invalid or revoked API key")
+            return {"role": "developer", "is_admin": False}
         abort(401, description="Authentication required")
     def _adm(c):
         if not c.get("is_admin") and c.get("role") != "admin":
@@ -144,7 +147,9 @@ def _build_shim() -> Blueprint:
 
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_routes(app):
-    if _need_shim: app.register_blueprint(_build_shim(), url_prefix=BASE)
+    if _need_shim and "repo_bp_shim" not in app.blueprints:
+        app._got_first_request = False
+        app.register_blueprint(_build_shim(), url_prefix=BASE)
     with app.app_context(): _db.create_all()
     yield
 
