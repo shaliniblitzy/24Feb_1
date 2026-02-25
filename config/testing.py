@@ -29,9 +29,6 @@ import tempfile
 
 from config.default import DefaultConfig
 
-# Base directory — absolute path of the directory containing this file.
-_basedir: str = os.path.abspath(os.path.dirname(__file__))
-
 
 class TestingConfig(DefaultConfig):
     """Testing configuration with in-memory SQLite and mock-friendly defaults.
@@ -110,7 +107,9 @@ class TestingConfig(DefaultConfig):
     # ==================================================================
 
     # Disable Elasticsearch — search tests should use a mocked client.
-    ELASTICSEARCH_URL: str = ""
+    # Set to None (not empty string) so that code can use truthiness checks
+    # (``if config.ELASTICSEARCH_URL:``) to detect disabled state.
+    ELASTICSEARCH_URL = None
 
     # File-based BlobStore in a temporary directory that is cleaned up
     # by the OS.  S3 tests should use the moto library for mocking.
@@ -120,7 +119,9 @@ class TestingConfig(DefaultConfig):
     )
 
     # Disable S3 storage backend — use moto for S3 BlobStore tests.
-    S3_BUCKET: str = ""
+    # Set to None (not empty string) so that code can use truthiness checks
+    # (``if config.S3_BUCKET:``) to detect disabled state.
+    S3_BUCKET = None
 
     # Disable LDAP directory authentication.
     LDAP_ENABLED: bool = False
