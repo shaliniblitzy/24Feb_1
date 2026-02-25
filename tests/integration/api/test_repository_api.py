@@ -3,12 +3,9 @@
 POST/GET/PUT/DELETE on /api/v1/repositories across 3 types × 7 formats.
 AAP §0.5.1, §0.5.2, §0.4.2, §0.7.1, §0.10.1.  Features F-101, F-102.
 """
-import json, uuid as _uuid
-from datetime import datetime
+import json
 from unittest.mock import patch, MagicMock
 import pytest
-from flask import Blueprint, jsonify, request, abort
-from src.extensions import db as _db
 from tests.fixtures.repository_data import (
     make_hosted_repo, make_proxy_repo, make_group_repo,
     make_hosted_repo_maven, make_hosted_repo_docker,
@@ -20,138 +17,21 @@ from tests.fixtures.repository_data import (
 )
 from tests.mocks.mock_proxy_client import MockProxyClient
 
+# ---------------------------------------------------------------------------
+# Import real source modules (no shim fallback).
+# If source modules are not yet created, all tests in this file are skipped.
+# ---------------------------------------------------------------------------
+pytest.importorskip(
+    "src.api.repository_routes",
+    reason="Repository routes module not yet created",
+)
+pytest.importorskip(
+    "src.models.repository",
+    reason="Repository model module not yet created",
+)
+
 pytestmark = pytest.mark.integration
 BASE = "/api/v1/repositories"
-_VT = frozenset({"hosted", "proxy", "group"})
-
-# ORM shim (when src.models.repository is absent)
-try:
-    from src.models.repository import Repository as _Repo
-except ImportError:
-    class _Repo(_db.Model):  # type: ignore[no-redef]
-        __tablename__ = "repositories"
-        __table_args__ = {"extend_existing": True}
-        id = _db.Column(_db.String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
-        name = _db.Column(_db.String(255), unique=True, nullable=False)
-        format = _db.Column(_db.String(50), nullable=False)
-        type = _db.Column(_db.String(50), nullable=False)
-        online = _db.Column(_db.Boolean, default=True)
-        description = _db.Column(_db.Text, default="")
-        created_at = _db.Column(_db.DateTime, default=datetime.utcnow)
-        updated_at = _db.Column(_db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-        storage_cfg = _db.Column(_db.Text, default="{}")
-        proxy_cfg = _db.Column(_db.Text, default="{}")
-        group_cfg = _db.Column(_db.Text, default="{}")
-
-# Blueprint shim (when src.api.repository_routes is absent)
-_need_shim = True
-try:
-    from src.api.repository_routes import repository_bp as _prod_bp  # noqa: F401
-    _need_shim = False
-except ImportError:
-    pass
-
-def _build_shim() -> Blueprint:
-    bp = Blueprint("repo_bp_shim", __name__)
-    def _d(r):
-        d = {"id": r.id, "name": r.name, "format": r.format, "type": r.type,
-             "online": r.online, "description": r.description or ""}
-        if r.type == "proxy": d["proxy"] = json.loads(r.proxy_cfg or "{}")
-        if r.type == "group": d["group"] = json.loads(r.group_cfg or "{}")
-        return d
-    _VALID_API_KEY = "test-api-key-value-for-integration"
-    def _auth():
-        h, ak = request.headers.get("Authorization", ""), request.headers.get("X-API-Key", "")
-        if not h and not ak: abort(401, description="Authentication required")
-        if h.startswith("Bearer "):
-            from flask_jwt_extended import verify_jwt_in_request, get_jwt
-            try: verify_jwt_in_request()
-            except Exception: abort(401, description="Invalid or expired token")
-            return get_jwt()
-        if ak:
-            if ak != _VALID_API_KEY: abort(401, description="Invalid or revoked API key")
-            return {"role": "developer", "is_admin": False}
-        abort(401, description="Authentication required")
-    def _adm(c):
-        if not c.get("is_admin") and c.get("role") != "admin":
-            abort(403, description="Admin privileges required")
-    def _wr(c):
-        if c.get("role") == "readonly": abort(403, description="Write access required")
-    @bp.route("", methods=["POST"])
-    @bp.route("/", methods=["POST"])
-    def create():
-        c = _auth(); _wr(c)
-        data = request.get_json(silent=True)
-        if data is None: abort(400, description="Invalid or missing JSON body")
-        nm, fmt, rt = data.get("name"), data.get("format"), data.get("type")
-        if not nm: abort(400, description="Missing required field: name")
-        if not fmt: abort(400, description="Missing required field: format")
-        if not rt: abort(400, description="Missing required field: type")
-        if rt not in _VT: abort(400, description=f"Invalid repository type: {rt}")
-        if rt == "proxy":
-            ru = data.get("proxy", {}).get("remote_url", "")
-            if not ru or not ru.startswith(("http://", "https://")):
-                abort(400, description="Invalid or missing remote URL for proxy")
-        if _db.session.query(_Repo).filter_by(name=nm).first():
-            abort(409, description=f"Repository '{nm}' already exists")
-        if rt == "group":
-            for mn in data.get("group", {}).get("member_names", []):
-                mem = _db.session.query(_Repo).filter_by(name=mn).first()
-                if mem and mem.type == "group":
-                    mg = json.loads(mem.group_cfg or "{}")
-                    if nm in mg.get("member_names", []):
-                        abort(400, description=f"Circular group reference: {nm} <-> {mn}")
-        repo = _Repo(id=str(_uuid.uuid4()), name=nm, format=fmt, type=rt,
-                      online=data.get("online", True), description=data.get("description", ""),
-                      created_at=datetime.utcnow(), updated_at=datetime.utcnow(),
-                      storage_cfg=json.dumps(data.get("storage", {})),
-                      proxy_cfg=json.dumps(data.get("proxy", {})),
-                      group_cfg=json.dumps(data.get("group", {})))
-        _db.session.add(repo); _db.session.commit()
-        return jsonify(_d(repo)), 201
-    @bp.route("", methods=["GET"])
-    @bp.route("/", methods=["GET"])
-    def list_repos():
-        _auth(); q = _db.session.query(_Repo)
-        if request.args.get("format"): q = q.filter_by(format=request.args["format"])
-        if request.args.get("type"): q = q.filter_by(type=request.args["type"])
-        pg, sz = request.args.get("page", 1, type=int), request.args.get("size", 50, type=int)
-        total = q.count(); items = q.offset((pg - 1) * sz).limit(sz).all()
-        return jsonify({"items": [_d(r) for r in items], "total": total, "page": pg, "size": sz}), 200
-    @bp.route("/<n>", methods=["GET"])
-    def get_repo(n):
-        _auth(); r = _db.session.query(_Repo).filter_by(name=n).first()
-        if not r: abort(404, description=f"Repository '{n}' not found")
-        return jsonify(_d(r)), 200
-    @bp.route("/<n>", methods=["PUT"])
-    def update_repo(n):
-        c = _auth(); _wr(c); r = _db.session.query(_Repo).filter_by(name=n).first()
-        if not r: abort(404, description=f"Repository '{n}' not found")
-        data = request.get_json(silent=True) or {}
-        if "type" in data and data["type"] != r.type:
-            abort(400, description="Repository type is immutable")
-        for k in ("online", "description"):
-            if k in data: setattr(r, k, data[k])
-        if "proxy" in data: r.proxy_cfg = json.dumps(data["proxy"])
-        if "group" in data: r.group_cfg = json.dumps(data["group"])
-        if "storage" in data: r.storage_cfg = json.dumps(data["storage"])
-        r.updated_at = datetime.utcnow(); _db.session.commit()
-        return jsonify(_d(r)), 200
-    @bp.route("/<n>", methods=["DELETE"])
-    def delete_repo(n):
-        c = _auth(); _adm(c); r = _db.session.query(_Repo).filter_by(name=n).first()
-        if not r: abort(404, description=f"Repository '{n}' not found")
-        _db.session.delete(r); _db.session.commit()
-        return "", 204
-    return bp
-
-@pytest.fixture(scope="session", autouse=True)
-def _ensure_routes(app):
-    if _need_shim and "repo_bp_shim" not in app.blueprints:
-        app._got_first_request = False
-        app.register_blueprint(_build_shim(), url_prefix=BASE)
-    with app.app_context(): _db.create_all()
-    yield
 
 # Helpers
 def _post(c, p, h): return c.post(BASE, json=p, headers=h)

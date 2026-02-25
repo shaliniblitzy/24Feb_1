@@ -3,7 +3,7 @@
 5 auth methods, 3-tier RBAC.  AAP §0.4.2/§0.5.1/§0.7.1, F-301/F-304.
 """
 import hashlib, json, secrets, uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
 import pytest
 from freezegun import freeze_time
@@ -20,136 +20,15 @@ from tests.fixtures.user_data import (
     ROLE_ANONYMOUS, DEFAULT_PASSWORD,
 )
 
-try:
-    from src.services.security_service import SecurityService
-except ImportError:
-    class SecurityService:
-        """Test-compatible shim implementing the expected auth service API."""
-        _AM = {"read": "nx-repository-view", "write": "nx-repository-edit",
-               "admin": "nx-repository-admin", "delete": "nx-repository-admin",
-               "upload": "nx-component-upload", "search": "nx-search-read"}
-        _RP = {"admin": ["nx-all"],
-               "developer": ["nx-repository-view", "nx-repository-edit",
-                              "nx-search-read", "nx-component-upload"],
-               "readonly": ["nx-repository-view", "nx-search-read"],
-               "anonymous": ["nx-repository-view"]}
-
-        def __init__(self):
-            self._keys, self._sess = {}, {}
-
-        def authenticate(self, username, password):
-            if not username or not password:
-                raise ValueError("Username and password are required")
-            u = User.query.filter_by(username=username).first()
-            if not u or not u.is_active:
-                return None
-            exp = "sha256$" + hashlib.sha256(password.encode("utf-8")).hexdigest()
-            if u.password_hash != exp:
-                return None
-            c = {"role": u.role, "privileges": self._RP.get(u.role, []),
-                 "username": u.username, "is_admin": u.is_admin}
-            at = create_access_token(identity=u.id, additional_claims=c)
-            rt = create_refresh_token(identity=u.id, additional_claims=c)
-            sid = secrets.token_hex(16)
-            now = datetime.utcnow()
-            self._sess[sid] = {"session_id": sid, "user_id": u.id,
-                               "is_active": True, "created_at": now,
-                               "expires_at": now + timedelta(hours=1)}
-            return {"access_token": at, "refresh_token": rt,
-                    "user_id": u.id, "session_id": sid}
-
-        def validate_token(self, token):
-            try:
-                d = decode_token(token)
-                return {"valid": True, "identity": d["sub"], "claims": d}
-            except Exception as e:
-                return {"valid": False, "error": str(e)}
-
-        def refresh_access_token(self, tok):
-            try:
-                d = decode_token(tok)
-                if d.get("type") != "refresh":
-                    return {"valid": False, "error": "Not a refresh token"}
-                c = {k: d[k] for k in ("role", "privileges", "username",
-                     "is_admin") if k in d}
-                return {"access_token": create_access_token(
-                    identity=d["sub"], additional_claims=c), "valid": True}
-            except Exception as e:
-                return {"valid": False, "error": str(e)}
-
-        def create_api_key(self, user_id, name, expires_at=None):
-            kv, kid = secrets.token_hex(32), str(uuid.uuid4())
-            e = {"id": kid, "key": kv, "name": name, "user_id": user_id,
-                 "expires_at": expires_at, "is_active": True}
-            self._keys[kv] = e
-            return dict(e)
-
-        def validate_api_key(self, key_value):
-            e = self._keys.get(key_value)
-            if not e or not e["is_active"]:
-                return None
-            if e.get("expires_at") and e["expires_at"] < datetime.utcnow():
-                return None
-            u = User.query.get(e["user_id"])
-            if not u or not u.is_active:
-                return None
-            return {"valid": True, "user_id": e["user_id"],
-                    "key_name": e["name"]}
-
-        def revoke_api_key(self, key_id):
-            for v in self._keys.values():
-                if v["id"] == key_id:
-                    v["is_active"] = False
-                    return True
-            return False
-
-        def get_anonymous_identity(self):
-            return {"role": ROLE_ANONYMOUS, "privileges": ["nx-repository-view"],
-                    "is_authenticated": False, "username": "anonymous"}
-
-        def check_privilege(self, identity, action, resource=None, path=None):
-            privs = identity.get("privileges", [])
-            if "nx-all" in privs:
-                return True
-            rp = identity.get("repo_permissions", {})
-            if resource and resource in rp:
-                r = self._AM.get(action)
-                if r and r in rp[resource]:
-                    return True
-            if path and identity.get("content_selectors"):
-                for s in identity["content_selectors"]:
-                    p = s.get("path_pattern", "")
-                    if p.endswith("/**"):
-                        if not path.startswith(p[:-3]):
-                            return False
-                    elif path != p:
-                        return False
-            r = self._AM.get(action)
-            return (r in privs) if r else False
-
-        def create_session(self, user_id, **kw):
-            sid = secrets.token_hex(16)
-            now = datetime.utcnow()
-            s = {"session_id": sid, "user_id": user_id, "is_active": True,
-                 "created_at": now, "expires_at": now + timedelta(hours=1)}
-            self._sess[sid] = s
-            return dict(s)
-
-        def validate_session(self, session_id):
-            s = self._sess.get(session_id)
-            if not s or not s["is_active"]:
-                return None
-            if s["expires_at"] < datetime.utcnow():
-                s["is_active"] = False
-                return None
-            return dict(s)
-
-        def logout(self, session_id):
-            s = self._sess.get(session_id)
-            if s:
-                s["is_active"] = False
-                return True
-            return False
+# ---------------------------------------------------------------------------
+# Import real SecurityService from source module (no shim fallback).
+# If the source module is not yet created, all tests in this file are skipped.
+# ---------------------------------------------------------------------------
+_security_mod = pytest.importorskip(
+    "src.services.security_service",
+    reason="SecurityService source module not yet created",
+)
+SecurityService = _security_mod.SecurityService
 
 pytestmark = pytest.mark.integration
 
@@ -261,7 +140,7 @@ def test_auth_validate_expired_api_key_fails(app, db_session, seeded_admin_user)
     """Expired API key is rejected."""
     svc = SecurityService()
     k = svc.create_api_key(user_id=seeded_admin_user.id, name="exp-key",
-                           expires_at=datetime.utcnow() - timedelta(days=1))
+                           expires_at=datetime.now(timezone.utc) - timedelta(days=1))
     assert svc.validate_api_key(k["key"]) is None
 
 def test_auth_validate_nonexistent_api_key_fails(app, db_session):

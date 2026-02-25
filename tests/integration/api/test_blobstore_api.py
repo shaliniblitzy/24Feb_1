@@ -5,15 +5,11 @@ POST/GET/PUT/DELETE on /api/v1/blobstores for File and S3 BlobStore types.
 AAP §0.5.1, §0.5.2, §0.4.2, §0.7.1, §0.10.1.  Features F-201, F-202.
 """
 import json
-import uuid as _uuid
 from datetime import datetime, timezone as _tz
 from unittest.mock import patch, MagicMock
 
 import pytest
-from flask import Blueprint, jsonify, request, abort
-from flask_jwt_extended import verify_jwt_in_request, get_jwt
 
-from src.extensions import db as _db
 from tests.fixtures.config_data import (
     make_blobstore_config,
     make_config_with_s3_storage,
@@ -21,183 +17,21 @@ from tests.fixtures.config_data import (
 )
 from tests.mocks.mock_s3_client import MockS3Client
 
+# ---------------------------------------------------------------------------
+# Import real source modules (no shim fallback).
+# If source modules are not yet created, all tests in this file are skipped.
+# ---------------------------------------------------------------------------
+pytest.importorskip(
+    "src.api.blobstore_routes",
+    reason="BlobStore routes module not yet created",
+)
+pytest.importorskip(
+    "src.models.blobstore",
+    reason="BlobStore model module not yet created",
+)
+
 pytestmark = pytest.mark.integration
 BASE = "/api/v1/blobstores"
-
-# ── ORM model shim (when src.models.blobstore is absent) ────────────────
-try:
-    from src.models.blobstore import BlobStore as _BS  # noqa: F401
-except ImportError:
-    class _BS(_db.Model):  # type: ignore[no-redef]
-        __tablename__ = "blobstores"
-        __table_args__ = {"extend_existing": True}
-        id = _db.Column(_db.String(36), primary_key=True,
-                        default=lambda: str(_uuid.uuid4()))
-        name = _db.Column(_db.String(255), unique=True, nullable=False)
-        type = _db.Column(_db.String(50), nullable=False)
-        path = _db.Column(_db.String(1024))
-        bucket = _db.Column(_db.String(255))
-        prefix = _db.Column(_db.String(255))
-        region = _db.Column(_db.String(50))
-        endpoint_url = _db.Column(_db.String(1024))
-        access_key_id = _db.Column(_db.String(255))
-        secret_access_key = _db.Column(_db.String(255))
-        force_path_style = _db.Column(_db.Boolean, default=False)
-        soft_quota = _db.Column(_db.BigInteger)
-        total_size = _db.Column(_db.BigInteger, default=0)
-        object_count = _db.Column(_db.Integer, default=0)
-        created_at = _db.Column(_db.DateTime,
-                                default=lambda: datetime.now(_tz.utc))
-        updated_at = _db.Column(_db.DateTime,
-                                default=lambda: datetime.now(_tz.utc))
-
-# ── Blueprint shim (when src.api.blobstore_routes is absent) ────────────
-_need_shim = True
-try:
-    from src.api.blobstore_routes import blobstore_bp as _prod  # noqa: F401
-    _need_shim = False
-except ImportError:
-    pass
-
-_VT = frozenset({"file", "s3"})
-
-
-def _build_shim() -> Blueprint:  # noqa: C901
-    bp = Blueprint("blobstore_bp_shim", __name__)
-
-    def _d(b):
-        d = {"id": b.id, "name": b.name, "type": b.type,
-             "created_at": b.created_at.isoformat() if b.created_at else None,
-             "updated_at": b.updated_at.isoformat() if b.updated_at else None}
-        if b.type == "file":
-            d.update(path=b.path, soft_quota=b.soft_quota)
-        elif b.type == "s3":
-            d.update(bucket=b.bucket, prefix=b.prefix, region=b.region,
-                     endpoint_url=b.endpoint_url,
-                     access_key_id=b.access_key_id,
-                     secret_access_key=b.secret_access_key,
-                     force_path_style=b.force_path_style,
-                     soft_quota=b.soft_quota)
-        return d
-
-    def _auth():
-        h = request.headers.get("Authorization", "")
-        ak = request.headers.get("X-API-Key", "")
-        if not h and not ak:
-            abort(401, description="Authentication required")
-        if h.startswith("Bearer "):
-            try:
-                verify_jwt_in_request()
-            except Exception:
-                abort(401, description="Invalid or expired token")
-            return get_jwt()
-        if ak:
-            return {"role": "admin", "is_admin": True}
-        abort(401, description="Authentication required")
-
-    def _adm(c):
-        if not c.get("is_admin") and c.get("role") != "admin":
-            abort(403, description="Admin privileges required")
-
-    @bp.route("", methods=["POST"])
-    @bp.route("/", methods=["POST"])
-    def create():
-        c = _auth(); _adm(c)
-        data = request.get_json(silent=True)
-        if data is None:
-            abort(400, description="Invalid or missing JSON body")
-        if not data.get("name"):
-            abort(400, description="Missing required field: name")
-        if data.get("type") not in _VT:
-            abort(400, description="Invalid BlobStore type: %s" % data.get("type"))
-        if data["type"] == "s3" and not data.get("bucket"):
-            abort(400, description="Missing required field: bucket (required for S3)")
-        if _db.session.query(_BS).filter_by(name=data["name"]).first():
-            abort(409, description="BlobStore '%s' already exists" % data["name"])
-        bs = _BS(name=data["name"], type=data["type"], path=data.get("path"),
-                 bucket=data.get("bucket"), prefix=data.get("prefix"),
-                 region=data.get("region"), endpoint_url=data.get("endpoint_url"),
-                 access_key_id=data.get("access_key_id"),
-                 secret_access_key=data.get("secret_access_key"),
-                 force_path_style=data.get("force_path_style", False),
-                 soft_quota=data.get("soft_quota"))
-        _db.session.add(bs); _db.session.commit()
-        return jsonify(_d(bs)), 201
-
-    @bp.route("", methods=["GET"])
-    @bp.route("/", methods=["GET"])
-    def list_all():
-        _auth()
-        q = _db.session.query(_BS)
-        t = request.args.get("type")
-        if t:
-            q = q.filter_by(type=t)
-        return jsonify([_d(b) for b in q.all()]), 200
-
-    @bp.route("/<name>", methods=["GET"])
-    def get_one(name):
-        _auth()
-        bs = _db.session.query(_BS).filter_by(name=name).first()
-        if not bs:
-            abort(404, description="BlobStore '%s' not found" % name)
-        return jsonify(_d(bs)), 200
-
-    @bp.route("/<name>", methods=["PUT"])
-    def update(name):
-        c = _auth(); _adm(c)
-        bs = _db.session.query(_BS).filter_by(name=name).first()
-        if not bs:
-            abort(404, description="BlobStore '%s' not found" % name)
-        data = request.get_json(silent=True)
-        if data is None:
-            abort(400, description="Invalid or missing JSON body")
-        if data.get("type") and data["type"] != bs.type:
-            abort(400, description="BlobStore type is immutable")
-        for k in ("path", "bucket", "prefix", "region", "endpoint_url",
-                   "access_key_id", "secret_access_key", "soft_quota"):
-            if k in data:
-                setattr(bs, k, data[k])
-        if "force_path_style" in data:
-            bs.force_path_style = data["force_path_style"]
-        bs.updated_at = datetime.now(_tz.utc)
-        _db.session.commit()
-        return jsonify(_d(bs)), 200
-
-    @bp.route("/<name>", methods=["DELETE"])
-    def delete(name):
-        c = _auth(); _adm(c)
-        bs = _db.session.query(_BS).filter_by(name=name).first()
-        if not bs:
-            return "", 204
-        from src.services.storage_service import StorageService
-        if StorageService.is_blobstore_in_use(name):
-            abort(409, description="BlobStore '%s' is in use" % name)
-        _db.session.delete(bs); _db.session.commit()
-        return "", 204
-
-    @bp.route("/<name>/status", methods=["GET"])
-    def status(name):
-        _auth()
-        bs = _db.session.query(_BS).filter_by(name=name).first()
-        if not bs:
-            abort(404, description="BlobStore '%s' not found" % name)
-        return jsonify(total_size=bs.total_size or 0,
-                       object_count=bs.object_count or 0,
-                       name=bs.name, type=bs.type), 200
-
-    return bp
-
-
-# ── Registration fixture ────────────────────────────────────────────────
-@pytest.fixture(scope="session", autouse=True)
-def _ensure_blobstore_routes(app):
-    """Register BlobStore shim blueprint if production routes are absent."""
-    if _need_shim and "blobstore_bp_shim" not in app.blueprints:
-        app._got_first_request = False
-        app.register_blueprint(_build_shim(), url_prefix=BASE)
-        with app.app_context():
-            _db.create_all()
-    yield
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────

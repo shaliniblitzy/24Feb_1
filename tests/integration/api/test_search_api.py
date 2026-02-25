@@ -15,7 +15,6 @@ import json
 from unittest.mock import patch, MagicMock
 
 import pytest
-from flask import Blueprint, jsonify, request, abort
 
 from tests.fixtures.repository_data import make_hosted_repo
 from tests.fixtures.artifact_data import (
@@ -32,148 +31,18 @@ from tests.integration.conftest import (
     assert_pagination,
 )
 
+# ---------------------------------------------------------------------------
+# Import real source modules (no shim fallback).
+# If source modules are not yet created, all tests in this file are skipped.
+# ---------------------------------------------------------------------------
+pytest.importorskip(
+    "src.api.search_routes",
+    reason="Search routes module not yet created",
+)
+
 pytestmark = pytest.mark.integration
 
 BASE = "/api/v1/search"
-
-# ---------------------------------------------------------------------------
-# Module-level bridge — the autouse fixture injects MockSearchEngine here
-# so the shim blueprint can read it at request-time.
-# ---------------------------------------------------------------------------
-_search_bridge: dict = {}
-
-# ---------------------------------------------------------------------------
-# Blueprint shim (when src.api.search_routes is absent)
-# ---------------------------------------------------------------------------
-_need_shim = True
-try:
-    from src.api.search_routes import search_bp as _prod_bp  # noqa: F401
-    _need_shim = False
-except ImportError:
-    pass
-
-_VALID_API_KEY = "test-api-key-value-for-integration"
-
-
-def _build_search_shim() -> Blueprint:
-    """Construct a lightweight search API blueprint for integration tests."""
-    bp = Blueprint("search_bp_shim", __name__)
-
-    def _auth():
-        h = request.headers.get("Authorization", "")
-        ak = request.headers.get("X-API-Key", "")
-        if not h and not ak:
-            abort(401, description="Authentication required")
-        if h.startswith("Bearer "):
-            from flask_jwt_extended import verify_jwt_in_request, get_jwt
-            try:
-                verify_jwt_in_request()
-            except Exception:
-                abort(401, description="Invalid or expired token")
-            return get_jwt()
-        if ak:
-            if ak != _VALID_API_KEY:
-                abort(401, description="Invalid or revoked API key")
-            return {"role": "developer", "is_admin": False}
-        abort(401, description="Authentication required")
-
-    @bp.route("", methods=["GET"])
-    @bp.route("/", methods=["GET"])
-    def search_components():
-        _auth()
-        # --- pagination -------------------------------------------------
-        page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 10, type=int)
-        if page < 1:
-            abort(400, description="Invalid page number: must be >= 1")
-        if size < 1:
-            abort(400, description="Invalid page size: must be >= 1")
-        # --- query params -----------------------------------------------
-        q = request.args.get("q", "")
-        keyword = request.args.get("keyword", "")
-        fmt = request.args.get("format", "")
-        repo = request.args.get("repository", "")
-        sort_f = request.args.get("sort", "")
-        sort_d = request.args.get("direction", "asc")
-        # --- faceted params ---------------------------------------------
-        mv_g = request.args.get("maven.groupId", "")
-        mv_a = request.args.get("maven.artifactId", "")
-        npm_s = request.args.get("npm.scope", "")
-        dk_i = request.args.get("docker.imageName", "")
-        dk_t = request.args.get("docker.imageTag", "")
-        py_c = request.args.get("pypi.classifiers", "")
-        # --- engine ------------------------------------------------------
-        engine = _search_bridge.get("engine")
-        if engine is None:
-            abort(503, description="Search service unavailable")
-        # --- build ES-style query ----------------------------------------
-        must = []
-        if q and q != "*":
-            must.append({"match": {"name": q}})
-        if keyword:
-            must.append({"match": {"name": keyword}})
-        if fmt:
-            must.append({"term": {"format": fmt}})
-        if repo:
-            must.append({"term": {"repository": repo}})
-        if mv_g:
-            must.append({"term": {"metadata.group_id": mv_g}})
-        if mv_a:
-            must.append({"term": {"metadata.artifact_id": mv_a}})
-        if npm_s:
-            must.append({"match": {"metadata.name": npm_s}})
-        if dk_i:
-            must.append({"term": {"metadata.repository": dk_i}})
-        if dk_t:
-            must.append({"term": {"metadata.tag": dk_t}})
-        if py_c:
-            must.append({"match": {"metadata.classifiers": py_c}})
-        query = {"bool": {"must": must}} if must else {"match_all": {}}
-        sort_spec = [{sort_f: {"order": sort_d}}] if sort_f else None
-        from_ = (page - 1) * size
-        try:
-            results = engine.search(
-                "components", query=query, size=size,
-                from_=from_, sort=sort_spec,
-            )
-        except SearchEngineConnectionError:
-            return jsonify(error="Service Unavailable",
-                           message="Search backend unavailable"), 503
-        except TimeoutError:
-            return jsonify(error="Gateway Timeout",
-                           message="Search request timed out"), 504
-        except Exception as exc:
-            return jsonify(error="Internal Server Error",
-                           message=f"Search error: {exc}"), 500
-        hits = results.get("hits", {})
-        total = hits.get("total", {}).get("value", 0)
-        items = [h.get("_source", {}) for h in hits.get("hits", [])]
-        return jsonify(items=items, totalCount=total, page=page, size=size), 200
-
-    return bp
-
-
-# ---------------------------------------------------------------------------
-# Session-scoped fixture: register the search shim once
-# ---------------------------------------------------------------------------
-@pytest.fixture(scope="session", autouse=True)
-def _register_search_shim(app):
-    if _need_shim and "search_bp_shim" not in app.blueprints:
-        app._got_first_request = False
-        app.register_blueprint(_build_search_shim(), url_prefix=BASE)
-    yield
-
-
-# ---------------------------------------------------------------------------
-# Function-scoped fixture: bridge mock_search into the shim per-test
-# ---------------------------------------------------------------------------
-@pytest.fixture(autouse=True)
-def _bridge_mock_search(mock_search):
-    if not mock_search.index_exists("components"):
-        mock_search.create_index("components")
-    _search_bridge["engine"] = mock_search
-    yield
-    _search_bridge.clear()
 
 
 # ===========================================================================

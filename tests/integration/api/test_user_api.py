@@ -3,15 +3,12 @@
 POST/GET/PUT/DELETE on /api/v1/users: CRUD, role assignment, password
 management, filtering, pagination, RBAC.  AAP §0.5.1, §0.5.2, §0.10.1.
 """
-import hashlib, json, uuid as _uuid
+import hashlib, json
 from datetime import datetime as _dt, timezone as _tz
 from unittest.mock import patch, MagicMock
 
 import pytest
-from flask import Blueprint, jsonify, request, abort
-from flask_jwt_extended import verify_jwt_in_request, get_jwt, get_jwt_identity
 
-from src.extensions import db as _db
 from src.models.user import User as _U
 from tests.fixtures.user_data import (
     make_admin_user, make_developer_user, make_readonly_user,
@@ -22,146 +19,20 @@ from tests.integration.conftest import (
     assert_json_response, assert_error_response, assert_pagination,
 )
 
+# ---------------------------------------------------------------------------
+# Import real source modules (no shim fallback).
+# If source modules are not yet created, all tests in this file are skipped.
+# ---------------------------------------------------------------------------
+pytest.importorskip(
+    "src.api.user_routes",
+    reason="User routes module not yet created",
+)
+
 pytestmark = pytest.mark.integration
 BASE = "/api/v1/users"
-_ROLES = frozenset({ROLE_ADMIN, ROLE_DEVELOPER, ROLE_READONLY})
-_MPW = 8
 
 def _hash(pw):
     return f"sha256${hashlib.sha256(pw.encode()).hexdigest()}"
-
-# -- shim blueprint (when src.api.user_routes absent) --
-_need = True
-try:
-    from src.api.user_routes import user_bp as _real  # noqa: F401
-    _need = False
-except ImportError:
-    pass
-
-def _build():  # noqa: C901
-    bp = Blueprint("user_bp_shim", __name__)
-    def _d(u):
-        return {"id": u.id, "username": u.username, "email": u.email,
-                "first_name": u.first_name, "last_name": u.last_name,
-                "role": u.role, "status": u.status, "is_admin": u.is_admin,
-                "created_at": u.created_at.isoformat() if u.created_at else None,
-                "updated_at": u.updated_at.isoformat() if u.updated_at else None}
-    def _auth():
-        if not request.headers.get("Authorization", ""):
-            abort(401, description="Authentication required")
-        try: verify_jwt_in_request()
-        except Exception: abort(401, description="Invalid or expired token")
-        return get_jwt(), get_jwt_identity()
-    def _adm(c):
-        if not c.get("is_admin") and c.get("role") != "admin":
-            abort(403, description="Admin privileges required")
-    @bp.route("", methods=["POST"])
-    @bp.route("/", methods=["POST"])
-    def create():
-        c, i = _auth(); _adm(c)
-        data = request.get_json(silent=True)
-        if data is None: abort(400, description="Invalid or missing JSON body")
-        for f in ("username", "email", "password"):
-            if not data.get(f): abort(400, description=f"Missing required field: {f}")
-        if "@" not in data.get("email", ""): abort(400, description="Invalid email format")
-        un = data["username"]
-        if not all(ch.isalnum() or ch in "-_." for ch in un):
-            abort(400, description="Username contains invalid characters")
-        if _db.session.query(_U).filter_by(username=un).first():
-            abort(409, description=f"Username '{un}' already exists")
-        if _db.session.query(_U).filter_by(email=data["email"]).first():
-            abort(409, description="Email already exists")
-        role = data.get("role", ROLE_DEVELOPER); now = _dt.now(_tz.utc)
-        u = _U(id=str(_uuid.uuid4()), username=un, email=data["email"],
-               first_name=data.get("first_name", ""), last_name=data.get("last_name", ""),
-               password_hash=_hash(data["password"]), role=role, status="active",
-               is_admin=(role == ROLE_ADMIN), created_at=now, updated_at=now)
-        _db.session.add(u); _db.session.commit()
-        return jsonify(_d(u)), 201
-    @bp.route("", methods=["GET"])
-    @bp.route("/", methods=["GET"])
-    def list_all():
-        c, i = _auth()
-        if c.get("role") == "readonly": abort(403, description="Insufficient privileges")
-        q = _db.session.query(_U)
-        if request.args.get("role"): q = q.filter_by(role=request.args["role"])
-        if request.args.get("status"): q = q.filter_by(status=request.args["status"])
-        if request.args.get("search"):
-            q = q.filter(_U.username.ilike(f"%{request.args['search']}%"))
-        pg, sz = request.args.get("page", 1, type=int), request.args.get("size", 50, type=int)
-        total = q.count(); items = q.offset((pg - 1) * sz).limit(sz).all()
-        return jsonify({"items": [_d(u) for u in items], "total": total, "page": pg, "size": sz}), 200
-    @bp.route("/me", methods=["GET"])
-    def me():
-        c, i = _auth()
-        u = _db.session.get(_U, i)
-        if not u:
-            return jsonify({"id": i, "username": c.get("username", ""),
-                            "role": c.get("role", ""), "email": None}), 200
-        return jsonify(_d(u)), 200
-    @bp.route("/<uid>", methods=["GET"])
-    def get_one(uid):
-        _auth(); u = _db.session.get(_U, uid)
-        if not u: abort(404, description=f"User '{uid}' not found")
-        return jsonify(_d(u)), 200
-    @bp.route("/<uid>", methods=["PUT"])
-    def update(uid):
-        c, i = _auth(); _adm(c); u = _db.session.get(_U, uid)
-        if not u: abort(404, description=f"User '{uid}' not found")
-        data = request.get_json(silent=True) or {}
-        for k in ("email", "first_name", "last_name", "status"):
-            if k in data: setattr(u, k, data[k])
-        u.updated_at = _dt.now(_tz.utc); _db.session.commit()
-        return jsonify(_d(u)), 200
-    @bp.route("/<uid>", methods=["DELETE"])
-    def delete(uid):
-        c, i = _auth(); _adm(c)
-        if uid == i: abort(400, description="Cannot delete your own admin account")
-        u = _db.session.get(_U, uid)
-        if not u: abort(404, description=f"User '{uid}' not found")
-        _db.session.delete(u); _db.session.commit()
-        return "", 204
-    @bp.route("/<uid>/role", methods=["PUT"])
-    def set_role(uid):
-        c, i = _auth(); _adm(c); u = _db.session.get(_U, uid)
-        if not u: abort(404, description=f"User '{uid}' not found")
-        data = request.get_json(silent=True) or {}; role = data.get("role")
-        if role not in _ROLES: abort(400, description=f"Invalid role: {role}")
-        u.role = role; u.is_admin = (role == ROLE_ADMIN)
-        u.updated_at = _dt.now(_tz.utc); _db.session.commit()
-        return jsonify(_d(u)), 200
-    @bp.route("/<uid>/roles", methods=["GET"])
-    def get_roles(uid):
-        _auth(); u = _db.session.get(_U, uid)
-        if not u: abort(404, description=f"User '{uid}' not found")
-        return jsonify({"user_id": uid, "role": u.role, "is_admin": u.is_admin}), 200
-    @bp.route("/<uid>/password", methods=["PUT"])
-    def set_pw(uid):
-        c, i = _auth()
-        is_adm = c.get("is_admin") or c.get("role") == "admin"
-        if i != uid and not is_adm:
-            abort(403, description="Cannot change another user's password")
-        u = _db.session.get(_U, uid)
-        if not u: abort(404, description=f"User '{uid}' not found")
-        data = request.get_json(silent=True) or {}
-        new_pw = data.get("new_password", "")
-        if len(new_pw) < _MPW: abort(400, description="Password too weak: minimum 8 characters")
-        if i == uid:
-            cur = data.get("current_password", "")
-            if cur and _hash(cur) != u.password_hash:
-                abort(400, description="Current password is incorrect")
-        u.password_hash = _hash(new_pw); u.updated_at = _dt.now(_tz.utc)
-        _db.session.commit()
-        return jsonify({"message": "Password updated successfully"}), 200
-    return bp
-
-@pytest.fixture(scope="session", autouse=True)
-def _ensure_user_routes(app):
-    if _need and "user_bp_shim" not in app.blueprints:
-        app._got_first_request = False
-        app.register_blueprint(_build(), url_prefix=BASE)
-    with app.app_context(): _db.create_all()
-    yield
 
 def _seed(ses, role=ROLE_DEVELOPER, **kw):
     factory = {ROLE_ADMIN: make_admin_user, ROLE_READONLY: make_readonly_user}.get(role, make_developer_user)

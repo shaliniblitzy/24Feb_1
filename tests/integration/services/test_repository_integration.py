@@ -22,106 +22,20 @@ from tests.fixtures.repository_data import (
 from tests.fixtures.user_data import make_admin_user
 
 # ---------------------------------------------------------------------------
-# Source-code imports — greenfield shim fallback
+# Import real source modules (no shim fallback).
+# If the source modules are not yet created, all tests in this file are skipped.
 # ---------------------------------------------------------------------------
-try:
-    from src.models.repository import Repository
-except ImportError:
-    from src.extensions import db as _db
+_repo_model_mod = pytest.importorskip(
+    "src.models.repository",
+    reason="Repository model source module not yet created",
+)
+Repository = _repo_model_mod.Repository
 
-    class Repository(_db.Model):  # type: ignore[no-redef]
-        """ORM shim so integration tests run before production code exists."""
-        __tablename__ = "repositories"
-        __table_args__ = {"extend_existing": True}
-        id = _db.Column(_db.String(36), primary_key=True,
-                        default=lambda: str(_uuid.uuid4()))
-        name = _db.Column(_db.String(255), unique=True, nullable=False)
-        format = _db.Column(_db.String(50), nullable=False)
-        type = _db.Column(_db.String(50), nullable=False)
-        online = _db.Column(_db.Boolean, default=True)
-        description = _db.Column(_db.Text, default="")
-        created_at = _db.Column(_db.DateTime, default=datetime.utcnow)
-        updated_at = _db.Column(_db.DateTime, default=datetime.utcnow,
-                                onupdate=datetime.utcnow)
-        storage_settings = _db.Column(_db.Text, default="{}")
-        proxy_settings = _db.Column(_db.Text, default="{}")
-        group_settings = _db.Column(_db.Text, default="{}")
-        cleanup_settings = _db.Column(_db.Text, default="{}")
-
-try:
-    from src.services.repository_service import RepositoryService
-except ImportError:
-    class RepositoryService:  # type: ignore[no-redef]
-        """Database-backed service shim defining the expected contract."""
-        VALID_TYPES = frozenset({"hosted", "proxy", "group"})
-
-        def __init__(self, session):
-            self._s = session
-
-        def create_repository(self, data):
-            rtype = data.get("type", "")
-            if rtype not in self.VALID_TYPES:
-                raise ValueError(f"Invalid repository type: {rtype}")
-            if self._s.query(Repository).filter_by(name=data["name"]).first():
-                raise ValueError(f"Repository '{data['name']}' already exists")
-            if rtype == "group":
-                self._check_circular(data)
-            now = datetime.utcnow()
-            repo = Repository(
-                id=data.get("id", str(_uuid.uuid4())), name=data["name"],
-                format=data["format"], type=rtype,
-                online=data.get("online", True),
-                description=data.get("description", ""),
-                created_at=now, updated_at=now,
-                storage_settings=_json.dumps(data.get("storage", {})),
-                proxy_settings=_json.dumps(data.get("proxy", {})),
-                group_settings=_json.dumps(data.get("group", {})),
-                cleanup_settings=_json.dumps(data.get("cleanup", {})),
-            )
-            self._s.add(repo)
-            self._s.flush()
-            return repo
-
-        def get_repository_by_name(self, name):
-            return self._s.query(Repository).filter_by(name=name).first()
-
-        def get_repository_by_id(self, rid):
-            return self._s.query(Repository).filter_by(id=rid).first()
-
-        def update_repository(self, rid, data):
-            repo = self.get_repository_by_id(rid)
-            if repo is None:
-                raise ValueError(f"Repository '{rid}' not found")
-            _map = {"storage": "storage_settings", "proxy": "proxy_settings",
-                     "group": "group_settings", "cleanup": "cleanup_settings"}
-            for k, v in data.items():
-                if k in _map:
-                    setattr(repo, _map[k], _json.dumps(v))
-                elif hasattr(repo, k):
-                    setattr(repo, k, v)
-            repo.updated_at = datetime.utcnow()
-            self._s.flush()
-            return repo
-
-        def delete_repository(self, rid):
-            repo = self.get_repository_by_id(rid)
-            if repo is None:
-                raise ValueError(f"Repository '{rid}' not found")
-            self._s.delete(repo)
-            self._s.flush()
-            return True
-
-        def list_repositories(self):
-            return self._s.query(Repository).all()
-
-        def _check_circular(self, data):
-            for mn in data.get("group", {}).get("member_names", []):
-                m = self.get_repository_by_name(mn)
-                if m and m.type == "group":
-                    mg = _json.loads(m.group_settings or "{}")
-                    if data["name"] in mg.get("member_names", []):
-                        raise ValueError(
-                            f"Circular reference: {data['name']} <-> {mn}")
+_repo_svc_mod = pytest.importorskip(
+    "src.services.repository_service",
+    reason="RepositoryService source module not yet created",
+)
+RepositoryService = _repo_svc_mod.RepositoryService
 
 # Module-level integration marker (AAP §0.9.1)
 pytestmark = pytest.mark.integration

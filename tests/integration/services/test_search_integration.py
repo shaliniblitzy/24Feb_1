@@ -8,7 +8,7 @@ real in-memory SQLite ``db_session`` for metadata persistence.
 AAP: §0.3.2, §0.4.2, §0.5.1, §0.7.1 (≥85%), Feature F-103.
 """
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -27,66 +27,15 @@ from tests.mocks.mock_search_engine import (
     IndexNotFoundError, DocumentNotFoundError, SearchEngineConnectionError,
 )
 
-# -- SearchService: import real impl or use test-compatible shim -----------
-try:
-    from src.services.search_service import SearchService
-except ImportError:
-    class SearchService:
-        """Test-compatible SearchService defining the expected interface."""
-
-        def __init__(self, search_engine=None):
-            self._engine = search_engine or MockSearchEngine()
-
-        def create_repository_index(self, repo_name, settings=None, mappings=None):
-            return self._engine.create_index(repo_name, settings=settings, mappings=mappings)
-
-        def delete_repository_index(self, repo_name):
-            try:
-                return self._engine.delete_index(repo_name)
-            except IndexNotFoundError:
-                return {"acknowledged": True}
-
-        def index_component(self, repo_name, component_data, doc_id=None):
-            if doc_id is None:
-                doc_id = component_data.get("id") or component_data.get("name")
-            return self._engine.index(repo_name, component_data, doc_id=doc_id)
-
-        def remove_from_index(self, repo_name, component_id):
-            try:
-                return self._engine.delete_document(repo_name, component_id)
-            except DocumentNotFoundError:
-                return {"result": "not_found"}
-
-        def search(self, repo_name, query=None, size=10, from_=0, filters=None):
-            es_query = self._build_query(query, filters)
-            return self._engine.search(repo_name, query=es_query, size=size, from_=from_)
-
-        def _build_query(self, query_text, filters):
-            if not query_text and not filters:
-                return {"match_all": {}}
-            clauses = []
-            if query_text:
-                clauses.append({"match": {"name": query_text}})
-            filter_clauses = []
-            if filters:
-                for k, v in filters.items():
-                    filter_clauses.append({"term": {k: v}})
-            if clauses and filter_clauses:
-                return {"bool": {"must": clauses, "filter": filter_clauses}}
-            if clauses:
-                return clauses[0]
-            return {"bool": {"filter": filter_clauses}}
-
-        def bulk_index(self, repo_name, components, id_field="id"):
-            return self._engine.bulk_index(repo_name, components, id_field=id_field)
-
-        def reindex_repository(self, repo_name, components, id_field="id"):
-            try:
-                self._engine.delete_index(repo_name)
-            except IndexNotFoundError:
-                pass
-            self._engine.create_index(repo_name)
-            return self._engine.bulk_index(repo_name, components, id_field=id_field)
+# ---------------------------------------------------------------------------
+# Import real SearchService from source module (no shim fallback).
+# If the source module is not yet created, all tests in this file are skipped.
+# ---------------------------------------------------------------------------
+_search_mod = pytest.importorskip(
+    "src.services.search_service",
+    reason="SearchService source module not yet created",
+)
+SearchService = _search_mod.SearchService
 
 pytestmark = pytest.mark.integration
 
@@ -99,7 +48,7 @@ def _svc(mock_search):
 def _comp(name, fmt="maven", version="1.0.0", **extra):
     """Build a minimal component metadata dict for indexing."""
     doc = {"id": name, "name": name, "format": fmt, "version": version,
-           "repository": f"{fmt}-releases", "created_at": datetime.utcnow().isoformat()}
+           "repository": f"{fmt}-releases", "created_at": datetime.now(timezone.utc).isoformat()}
     doc.update(extra)
     return doc
 

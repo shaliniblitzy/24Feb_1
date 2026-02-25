@@ -5,7 +5,7 @@ All upstream HTTP mocked via ``responses``.  AAP §0.3.2/§0.4.2/§0.5.1, F-102 
 """
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
 import pytest
 import responses
@@ -25,92 +25,14 @@ from tests.mocks.mock_proxy_client import (
 )
 
 # ---------------------------------------------------------------------------
-# Source-code imports with greenfield shim fallback
+# Import real RepositoryService from source module (no shim fallback).
+# If the source module is not yet created, all tests in this file are skipped.
 # ---------------------------------------------------------------------------
-try:
-    from src.services.repository_service import RepositoryService
-except ImportError:
-    import requests as _req
-
-    class RepositoryService:  # type: ignore[no-redef]
-        """Test-compatible proxy service shim using ``requests``."""
-        def __init__(self, db_session=None):
-            self._session = db_session
-            self._cache: dict = {}
-            self._neg: dict = {}
-            self._fails: dict = {}
-            self._repos: dict = {}
-
-        def create_proxy_repository(self, cfg):
-            self._repos[cfg["name"]] = dict(cfg)
-            return cfg
-
-        def set_repository_online(self, name, online=True):
-            if name in self._repos:
-                self._repos[name]["online"] = online
-                if online:
-                    self._fails[name] = 0
-
-        @staticmethod
-        def _is_meta(p):
-            return any(i in p for i in
-                       ("maven-metadata.xml", "/json", "index.json", "Packages"))
-
-        def fetch_from_proxy(self, rn, ap):
-            repo = self._repos.get(rn)
-            if not repo or not repo.get("online", True):
-                return None
-            px = repo.get("proxy", {})
-            nc = repo.get("negative_cache", {"enabled": True, "time_to_live": 1440})
-            k = (rn, ap)
-            # negative-cache check
-            if nc.get("enabled") and k in self._neg:
-                if (datetime.utcnow() - self._neg[k]).total_seconds() < nc.get("time_to_live", 1440) * 60:
-                    return None
-            # content/metadata cache check
-            if k in self._cache:
-                e = self._cache[k]
-                ma = px.get("metadata_max_age" if self._is_meta(ap) else "content_max_age", 1440)
-                if (datetime.utcnow() - e["cached_at"]).total_seconds() / 60 < ma:
-                    return e
-            url = px.get("remote_url", "").rstrip("/") + "/" + ap.lstrip("/")
-            hdrs: dict = {}
-            auth = repo.get("http_client", {}).get("authentication")
-            if auth and auth.get("username"):
-                import base64
-                c = base64.b64encode(f"{auth['username']}:{auth.get('password', '')}".encode()).decode()
-                hdrs["Authorization"] = f"Basic {c}"
-            try:
-                resp = _req.get(url, headers=hdrs, timeout=60)
-            except Exception:
-                if k in self._cache:
-                    return self._cache[k]
-                self._rf(rn, repo)
-                return None
-            if resp.status_code == 404:
-                if nc.get("enabled"):
-                    self._neg[k] = datetime.utcnow()
-                return None
-            if resp.status_code >= 400:
-                if k in self._cache:
-                    return self._cache[k]
-                self._rf(rn, repo)
-                return None
-            ct = resp.headers.get("Content-Type", "application/octet-stream")
-            entry = {"content": resp.content, "content_type": ct,
-                     "size": len(resp.content),
-                     "sha256": hashlib.sha256(resp.content).hexdigest(),
-                     "cached_at": datetime.utcnow()}
-            self._cache[k] = entry
-            self._fails[rn] = 0
-            return entry
-
-        def _rf(self, n, r):
-            if r.get("http_client", {}).get("auto_block"):
-                c = self._fails.get(n, 0) + 1
-                self._fails[n] = c
-                if c >= 3:
-                    r["online"] = False
+_repo_svc_mod = pytest.importorskip(
+    "src.services.repository_service",
+    reason="RepositoryService source module not yet created",
+)
+RepositoryService = _repo_svc_mod.RepositoryService
 
 try:
     from src.models.repository import Repository
@@ -174,7 +96,7 @@ def test_proxy_fetch_returns_cached_when_upstream_unavailable(app, db_session, m
     mocked_responses.add(responses.GET, url, body=art["content"], status=200)
     mocked_responses.add(responses.GET, url, status=503)
     r1 = svc.fetch_from_proxy("mvn-fb", "org/fb/b.jar")
-    svc._cache[("mvn-fb", "org/fb/b.jar")]["cached_at"] = datetime.utcnow() - timedelta(days=2)
+    svc._cache[("mvn-fb", "org/fb/b.jar")]["cached_at"] = datetime.now(timezone.utc) - timedelta(days=2)
     r2 = svc.fetch_from_proxy("mvn-fb", "org/fb/b.jar")
     assert r1 is not None and r2 is not None
     assert r2["content"] == art["content"]
@@ -291,7 +213,7 @@ def test_proxy_cache_respects_content_max_age(app, db_session, mocked_responses)
     mocked_responses.add(responses.GET, url, body=art["content"], status=200)
     svc.fetch_from_proxy("cache-age", "org/ca/x.jar")
     svc._cache[("cache-age", "org/ca/x.jar")]["cached_at"] = (
-        datetime.utcnow() - timedelta(minutes=5))
+        datetime.now(timezone.utc) - timedelta(minutes=5))
     svc.fetch_from_proxy("cache-age", "org/ca/x.jar")
     assert len(mocked_responses.calls) == 2
     assert svc._cache[("cache-age", "org/ca/x.jar")]["content"] == art["content"]
@@ -310,7 +232,7 @@ def test_proxy_cache_respects_metadata_max_age(app, db_session, mocked_responses
                           content_type="application/xml")
     svc.fetch_from_proxy("meta-age", "org/test/maven-metadata.xml")
     svc._cache[("meta-age", "org/test/maven-metadata.xml")]["cached_at"] = (
-        datetime.utcnow() - timedelta(minutes=5))
+        datetime.now(timezone.utc) - timedelta(minutes=5))
     svc.fetch_from_proxy("meta-age", "org/test/maven-metadata.xml")
     assert len(mocked_responses.calls) == 2
     assert svc._cache[("meta-age", "org/test/maven-metadata.xml")] is not None
