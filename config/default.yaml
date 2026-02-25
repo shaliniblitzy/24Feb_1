@@ -1,0 +1,180 @@
+# ============================================
+# Nexus Repository Manager — Default Configuration
+# ============================================
+# This file contains the complete set of configuration defaults.
+# Environment-specific files (development.yaml, production.yaml, testing.yaml)
+# override values defined here. Environment variables take highest precedence.
+#
+# Configuration hierarchy:
+#   default.yaml -> {environment}.yaml -> environment variables
+#
+# This replaces the OSGi ConfigurationAdmin from the original Java stack.
+#
+# Every configuration key used by the application MUST be defined here
+# with a sensible default value. This file serves as the authoritative
+# reference for all available settings.
+#
+# Standalone-optimized defaults:
+#   - Database: SQLite (zero external dependency)
+#   - BlobStore: File-based (local filesystem)
+#   - Search: Whoosh (pure-Python, no Elasticsearch required)
+# ============================================
+
+# --- Application Settings ---
+# Core Flask application configuration.
+app:
+  debug: false
+  testing: false
+  secret_key: "change-me-to-a-random-secret-key"
+
+# --- Database Configuration ---
+# Default: SQLite for standalone deployment (AAP: "database URL (SQLite default)")
+# Replaces: MyBatis 3.5.15 + HikariCP 4.0.3 + H2 2.3.232
+# Override via DATABASE_URL environment variable for PostgreSQL in production.
+# Example PostgreSQL URL: postgresql://user:password@host:5432/nexus
+database:
+  url: "sqlite:///nexus.db"
+  echo: false
+  track_modifications: false
+  engine_options:
+    pool_size: 10
+    max_overflow: 20
+    pool_timeout: 30
+    pool_recycle: 1800
+    pool_pre_ping: true
+
+# --- BlobStore Configuration ---
+# Default: File-based storage (AAP: "BlobStore path")
+# Replaces: BlobStore manager from the original Java implementation.
+# Two backends supported: "file" (local filesystem) and "s3" (AWS S3).
+storage:
+  blobstore_type: "file"
+  blobstore_path: "./data/blobs"
+
+# --- S3 BlobStore Settings ---
+# Only used when storage.blobstore_type = "s3"
+# Replaces: AWS SDK for Java S3 integration.
+# In production, credentials should be set via environment variables
+# (S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY) or IAM roles.
+s3:
+  bucket: ""
+  region: "us-east-1"
+  access_key_id: ""
+  secret_access_key: ""
+  encryption: "SSE-S3"
+  kms_key_arn: ""
+
+# --- JWT Authentication ---
+# Replaces: Java-JWT (auth0) 4.4.0.
+# Override via JWT_SECRET environment variable in production.
+jwt:
+  secret: "change-me-to-a-random-jwt-secret"
+  algorithm: "HS256"
+  expiration_hours: 24
+
+# --- LDAP Configuration ---
+# Replaces: Apache Shiro 2.0.0 LDAP realm.
+# LDAP authentication is disabled when url is empty.
+# Override via LDAP_URL, LDAP_BASE_DN, LDAP_BIND_DN,
+# LDAP_BIND_PASSWORD environment variables.
+ldap:
+  url: ""
+  base_dn: ""
+  user_search_filter: "(uid={0})"
+  bind_dn: ""
+  bind_password: ""
+  use_tls: true
+
+# --- SAML/OIDC Configuration ---
+# For SSO federation with external identity providers.
+# Replaces: Custom Shiro realm integrations for SAML/OIDC.
+# Disabled when URLs/IDs are empty.
+saml:
+  idp_metadata_url: ""
+oidc:
+  client_id: ""
+  client_secret: ""
+  discovery_url: ""
+
+# --- Search Configuration ---
+# Default: Whoosh for standalone (AAP: "search backend (Whoosh)")
+# Replaces: Elasticsearch 2.4.3 embedded mode.
+# Two backends supported: "whoosh" (pure-Python) and "elasticsearch" (external).
+search:
+  backend: "whoosh"
+  whoosh_index_path: "./data/search"
+  elasticsearch_url: "http://localhost:9200"
+
+# --- Scheduler Settings ---
+# Replaces: Quartz 2.3.2 cluster-aware scheduling.
+# APScheduler 3.11.2 with BackgroundScheduler and SQLAlchemyJobStore.
+# The jobstore_url defaults to the database URL when empty.
+scheduler:
+  enabled: true
+  jobstore_url: ""
+  # Default task schedules (cron expressions)
+  default_tasks:
+    cleanup:
+      enabled: true
+      cron: "0 0 1 * *"
+      description: "Run cleanup policies on all repositories"
+    compaction:
+      enabled: true
+      cron: "0 0 2 * *"
+      description: "Compact BlobStore to reclaim deleted space"
+    integrity_check:
+      enabled: true
+      cron: "0 0 3 * 0"
+      description: "Verify BlobStore integrity (weekly)"
+
+# --- Metrics and Observability ---
+# Replaces: Dropwizard Metrics 4.2.25 + Prometheus 0.16.0.
+# Exposes Prometheus-compatible metrics at the configured endpoint.
+metrics:
+  enabled: true
+  endpoint: "/service/metrics"
+
+# --- Logging ---
+# Replaces: Log4j2 / SLF4J from the original Java stack.
+# Structured JSON logging for SIEM compatibility (AAP Section 0.7.5).
+# Supported levels: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+# Supported formats: "json" (structured), "text" (human-readable).
+logging:
+  level: "INFO"
+  format: "json"
+
+# --- SSL/TLS ---
+# Replaces: BouncyCastle 1.78.1 trust store management.
+# Configure paths for SSL certificate, private key, and trust store.
+# Empty paths disable SSL/TLS at the application level.
+ssl:
+  cert_path: ""
+  key_path: ""
+  truststore_path: ""
+
+# --- SIEM Integration ---
+# For audit log forwarding to external SIEM systems.
+# Disabled when endpoint is empty.
+siem:
+  endpoint: ""
+  token: ""
+
+# --- Server Settings ---
+# Bind address and port for the Flask development server and Gunicorn.
+# Matches Nexus standard port (8081).
+server:
+  host: "0.0.0.0"
+  port: 8081
+
+# --- Repository Defaults ---
+# Default settings for newly created repositories.
+# These values are applied when creating new repositories unless
+# explicitly overridden in the repository configuration.
+repository_defaults:
+  proxy:
+    content_max_age: 1440
+    metadata_max_age: 1440
+    negative_cache_enabled: true
+    negative_cache_ttl: 1440
+  cleanup:
+    retention_days: 30
