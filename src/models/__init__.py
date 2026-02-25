@@ -8,5 +8,6 @@ scheduled tasks, and security objects.
 
 from src.models.user import User
 from src.models.task import Task
+from src.models.blobstore import BlobStore
 
-__all__ = ["User", "Task"]
+__all__ = ["User", "Task", "BlobStore"]
