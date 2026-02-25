@@ -1,0 +1,115 @@
+# ============================================
+# Nexus Repository Manager — Testing Configuration
+# ============================================
+# Overrides default.yaml for the test environment.
+# Used by pytest via: create_app('testing')
+#
+# Configuration hierarchy:
+#   default.yaml → testing.yaml → environment variables
+#
+# Optimized for test isolation and speed:
+#   - In-memory SQLite for clean database per run
+#   - Disabled scheduler to prevent timing interference
+#   - Disabled metrics to reduce overhead
+#   - Temporary paths for blob and search storage
+#   - No external service dependencies (LDAP, SAML, SIEM)
+
+# --- Application Settings ---
+app:
+  debug: true
+  testing: true
+  secret_key: "test-secret-key-not-for-production"
+
+# --- Database Configuration ---
+# In-memory SQLite for test isolation (AAP Section 0.2.1: "in-memory SQLite database")
+# Ensures each test run starts with a clean database — critical for test isolation
+# Replaces: MyBatis 3.5.15 + HikariCP 4.0.3 + H2 2.3.232
+database:
+  url: "sqlite://"
+  echo: false
+  track_modifications: false
+  # No connection pool settings for SQLite in-memory
+  engine_options:
+    pool_size: null
+    max_overflow: null
+
+# --- BlobStore Configuration ---
+# Mock/temporary BlobStore for tests (AAP: "mock BlobStore")
+# Uses a temporary directory for test artifact isolation
+storage:
+  blobstore_type: "file"
+  blobstore_path: "/tmp/nexus-test-blobs"
+
+# --- S3 BlobStore (disabled for tests) ---
+# Placeholder values for moto-based mock testing when needed
+s3:
+  bucket: "test-bucket"
+  region: "us-east-1"
+  access_key_id: "testing"
+  secret_access_key: "testing"
+  encryption: "SSE-S3"
+  kms_key_arn: ""
+
+# --- JWT Authentication ---
+# Test-only secret — NOT for production use
+jwt:
+  secret: "test-jwt-secret"
+  algorithm: "HS256"
+  expiration_hours: 1
+
+# --- LDAP (disabled in tests) ---
+# Empty URL disables LDAP authentication realm
+ldap:
+  url: ""
+  base_dn: ""
+  user_search_filter: "(uid={0})"
+  bind_dn: ""
+  bind_password: ""
+  use_tls: false
+
+# --- SAML/OIDC (disabled in tests) ---
+# Empty URLs disable SSO federation
+saml:
+  idp_metadata_url: ""
+oidc:
+  client_id: ""
+  client_secret: ""
+  discovery_url: ""
+
+# --- Search Configuration ---
+# Whoosh for self-contained tests — no Elasticsearch dependency
+# AAP Section 0.7.6: "No test may depend on external network connectivity"
+search:
+  backend: "whoosh"
+  whoosh_index_path: "/tmp/nexus-test-search"
+  elasticsearch_url: "http://localhost:9200"
+
+# --- Scheduler (disabled for tests — AAP: "disabled scheduler") ---
+# Prevents background tasks from interfering with test execution timing
+scheduler:
+  enabled: false
+  jobstore_url: ""
+
+# --- Metrics (disabled for tests — AAP: "disabled metrics") ---
+# Avoids metric collection overhead during test runs
+metrics:
+  enabled: false
+
+# --- Logging ---
+# DEBUG level for maximum visibility into test execution
+logging:
+  level: "DEBUG"
+  format: "text"
+
+# --- SSL/TLS (disabled for tests) ---
+# No TLS termination needed in test environment
+ssl:
+  cert_path: ""
+  key_path: ""
+  truststore_path: ""
+
+# --- SIEM (disabled for tests) ---
+# No audit log forwarding in test environment
+siem:
+  endpoint: ""
+  token: ""
