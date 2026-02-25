@@ -31,4 +31,8 @@ from src.app.schemas.task import (  # noqa: F401
     TaskDefinitionSchema,
     TaskExecutionSchema,
 )
+from src.app.schemas.search import (  # noqa: F401
+    SearchQuerySchema,
+    SearchResultSchema,
+)
 
