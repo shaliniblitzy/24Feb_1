@@ -1,16 +1,31 @@
-# Development and Testing dependencies - Pinned versions per AAP specification
+# ============================================
+# Nexus Repository Manager — Development Dependencies
+# ============================================
+# Install with: pip install -r requirements-dev.txt
+# Includes all production dependencies plus dev/test tools.
+
+# Include production dependencies
 -r requirements.txt
 
-# Testing
+# --- Testing Framework ---
 pytest==8.3.4
 pytest-cov==6.0.0
 pytest-flask==1.3.0
 pytest-mock==3.14.0
+
+# --- Test Data Generation ---
 factory-boy==3.3.1
-moto==5.0.27
 Faker==33.3.1
 
-# Code Quality
+# --- AWS Mocking ---
+moto==5.0.27
+
+# --- Code Quality ---
 flake8==7.1.1
 black==24.10.0
 mypy==1.14.1
+
+# --- Type Stubs (for mypy) ---
+types-requests
+types-PyYAML
+types-Flask-CORS
