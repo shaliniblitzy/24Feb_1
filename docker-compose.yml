@@ -1,0 +1,186 @@
+# ==============================================
+# Nexus Repository Manager — Docker Compose
+# Multi-Service Development Environment
+# ==============================================
+# Defines a three-service stack for local development and integration
+# testing of the Sonatype Nexus Repository Python/Flask application:
+#
+#   1. app            – Flask application served by Gunicorn
+#   2. postgres       – PostgreSQL 16 metadata database (DataStore)
+#   3. elasticsearch  – Elasticsearch 8.17.0 full-text search engine
+#
+# Usage:
+#   docker compose up              # start all services (foreground)
+#   docker compose up -d           # start all services (background)
+#   docker compose down            # stop and remove containers
+#   docker compose down -v         # stop, remove containers AND volumes
+#   docker compose logs -f app     # tail Flask application logs
+#
+# Deployment models supported:
+#   Standalone:       SQLite + File BlobStore       (run app only)
+#   Clustered:        PostgreSQL + Shared Filesystem (this compose file)
+#   Container-Native: PostgreSQL + S3 BlobStore     (override BLOBSTORE_TYPE)
+# ==============================================
+
+version: "3.9"
+
+services:
+  # -----------------------------------------------
+  # Nexus Repository Flask Application
+  # -----------------------------------------------
+  # Builds the application image from the project Dockerfile
+  # (python:3.13-slim + Gunicorn).  Waits for both postgres and
+  # elasticsearch to report healthy before starting.
+  # -----------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexus-repository
+    ports:
+      - "8081:8081"
+    environment:
+      # --- Flask core ---
+      - FLASK_APP=src.app:create_app
+      - FLASK_ENV=development
+      - SECRET_KEY=dev-secret-key-change-in-production
+      - DEBUG=true
+
+      # --- Database (connects to the 'postgres' service) ---
+      - DATABASE_URL=postgresql://nexus:nexus@postgres:5432/nexus
+
+      # --- BlobStore ---
+      - BLOBSTORE_TYPE=file
+      - BLOBSTORE_PATH=/data/blobs
+
+      # --- Search (connects to the 'elasticsearch' service) ---
+      - SEARCH_BACKEND=elasticsearch
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+
+      # --- JWT Authentication ---
+      - JWT_SECRET=dev-jwt-secret-change-in-production
+      - JWT_ALGORITHM=HS256
+      - JWT_EXPIRATION_HOURS=24
+
+      # --- Scheduler ---
+      - SCHEDULER_ENABLED=true
+
+      # --- Metrics & Observability ---
+      - METRICS_ENABLED=true
+      - LOG_LEVEL=DEBUG
+      - LOG_FORMAT=json
+
+      # --- Gunicorn (overrides from gunicorn.conf.py) ---
+      - GUNICORN_WORKERS=2
+      - GUNICORN_TIMEOUT=120
+    volumes:
+      # Persistent blob storage
+      - blob-data:/data/blobs
+      # Read-only source mount for live-reload during development
+      - ./src:/app/src:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/service/rest/v1/status/check"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - nexus-network
+
+  # -----------------------------------------------
+  # PostgreSQL 16 — Metadata Database (DataStore)
+  # -----------------------------------------------
+  # Stores all relational metadata: repositories, components,
+  # assets, users, roles, privileges, content selectors, tasks,
+  # system configuration, and audit events.
+  # Replaces H2 2.3.232 (standalone) / PostgreSQL JDBC 42.7.2
+  # from the original Java implementation.
+  # -----------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexus-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=nexus
+      - POSTGRES_PASSWORD=nexus
+      - POSTGRES_DB=nexus
+      # Performance tuning for development
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - nexus-network
+
+  # -----------------------------------------------
+  # Elasticsearch 8.17.0 — Full-Text Search Engine
+  # -----------------------------------------------
+  # Provides content indexing and full-text search (F-103) for
+  # component discovery across all repository formats.
+  # Replaces the embedded Elasticsearch 2.4.3 from the original
+  # Java implementation.  Version 8.17.0 matches the elasticsearch
+  # Python client specified in AAP Section 0.3.1.
+  # -----------------------------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+    container_name: nexus-elasticsearch
+    ports:
+      - "9200:9200"
+    environment:
+      # Single-node discovery for development (no clustering)
+      - discovery.type=single-node
+      # Disable X-Pack security for local development simplicity
+      - xpack.security.enabled=false
+      # Disable enrollment for single-node dev setup
+      - xpack.security.enrollment.enabled=false
+      # JVM heap size — 512 MB suitable for development workloads
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      # Prevent bootstrap checks from failing in dev
+      - cluster.name=nexus-search
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - nexus-network
+
+# -----------------------------------------------
+# Named Volumes
+# -----------------------------------------------
+# Persistent storage for each service.  Data survives container
+# restarts and rebuilds.  Use `docker compose down -v` to remove.
+# -----------------------------------------------
+volumes:
+  postgres-data:
+    driver: local
+  es-data:
+    driver: local
+  blob-data:
+    driver: local
+
+# -----------------------------------------------
+# Networks
+# -----------------------------------------------
+# Dedicated bridge network so that services can resolve each other
+# by container name (postgres, elasticsearch) without port conflicts
+# on the host.
+# -----------------------------------------------
+networks:
+  nexus-network:
+    driver: bridge
