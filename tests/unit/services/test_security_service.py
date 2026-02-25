@@ -111,6 +111,7 @@ def test_validate_jwt_token_expired_fails(mock_db_session):
     with pytest.raises(TokenExpiredError) as exc_info:
         svc.validate_token(expired_token)
     assert "expired" in str(exc_info.value).lower()
+    assert exc_info.type is TokenExpiredError
 
 
 def test_validate_jwt_token_invalid_signature_fails(mock_db_session):
@@ -119,6 +120,7 @@ def test_validate_jwt_token_invalid_signature_fails(mock_db_session):
     with pytest.raises(InvalidTokenError) as exc_info:
         svc.validate_token("tampered.token.value")
     assert "Invalid signature" in str(exc_info.value)
+    assert exc_info.type is InvalidTokenError
 
 
 def test_refresh_jwt_token_success(mock_db_session):
@@ -163,6 +165,7 @@ def test_authenticate_with_invalid_api_key_fails(mock_db_session):
     with pytest.raises(AuthenticationError, match="Key not found") as exc_info:
         svc.validate_api_key("invalid-key-abc123")
     assert "Key not found" in str(exc_info.value)
+    assert exc_info.type is AuthenticationError
 
 
 def test_authenticate_with_revoked_api_key_fails(mock_db_session):
@@ -173,6 +176,7 @@ def test_authenticate_with_revoked_api_key_fails(mock_db_session):
     with pytest.raises(AuthenticationError, match="revoked") as exc_info:
         svc.validate_api_key(created.key)
     assert "revoked" in str(exc_info.value).lower()
+    assert exc_info.type is AuthenticationError
 
 
 def test_authenticate_with_expired_api_key_fails(mock_db_session):
@@ -183,6 +187,7 @@ def test_authenticate_with_expired_api_key_fails(mock_db_session):
     with pytest.raises(AuthenticationError) as exc_info:
         svc.validate_api_key(created.key)
     assert "expired" in str(exc_info.value).lower()
+    assert exc_info.type is AuthenticationError
 
 
 def test_create_api_key_success(mock_db_session):
@@ -226,6 +231,7 @@ def test_authenticate_with_invalid_password_fails(mock_db_session):
     with pytest.raises(AuthenticationError, match="Invalid password") as exc_info:
         svc.authenticate("testuser", "WrongPassword!")
     assert "Invalid password" in str(exc_info.value)
+    assert exc_info.type is AuthenticationError
 
 
 def test_authenticate_with_nonexistent_user_fails(mock_db_session):
@@ -235,6 +241,7 @@ def test_authenticate_with_nonexistent_user_fails(mock_db_session):
     with pytest.raises(AuthenticationError, match="User not found") as exc_info:
         svc.authenticate("nonexistent", "password")
     assert "User not found" in str(exc_info.value)
+    assert exc_info.type is AuthenticationError
 
 
 # =========================================================================
@@ -358,6 +365,7 @@ def test_validate_expired_session_fails(mock_db_session):
     with pytest.raises(SessionExpiredError, match="expired") as exc_info:
         svc.validate_session(created.session_id)
     assert "expired" in str(exc_info.value).lower()
+    assert exc_info.type is SessionExpiredError
 
 
 def test_invalidate_session_success(mock_db_session):
@@ -389,6 +397,7 @@ def test_authenticate_with_empty_credentials_fails(mock_db_session):
     with pytest.raises(AuthenticationError, match="Empty") as exc_info:
         svc.authenticate("", "")
     assert "Empty credentials" in str(exc_info.value)
+    assert exc_info.type is AuthenticationError
 
 
 def test_generate_token_for_inactive_user_fails(mock_db_session):
@@ -398,6 +407,7 @@ def test_generate_token_for_inactive_user_fails(mock_db_session):
     with pytest.raises(AuthenticationError, match="inactive") as exc_info:
         svc.generate_token(user_data)
     assert "inactive" in str(exc_info.value).lower()
+    assert exc_info.type is AuthenticationError
 
 
 def test_check_privilege_with_none_user_fails(mock_db_session):
@@ -406,6 +416,7 @@ def test_check_privilege_with_none_user_fails(mock_db_session):
     with pytest.raises(ValueError, match="None") as exc_info:
         svc.check_privilege(None, PRIV_REPO_READ)
     assert "None" in str(exc_info.value)
+    assert exc_info.type is ValueError
 
 
 def test_rbac_insufficient_privileges_returns_false(mock_db_session):
@@ -425,3 +436,4 @@ def test_validate_session_not_found_raises(mock_db_session):
     with pytest.raises(AuthenticationError, match="not found") as exc_info:
         svc.validate_session("nonexistent-session-id")
     assert "not found" in str(exc_info.value).lower()
+    assert exc_info.type is AuthenticationError

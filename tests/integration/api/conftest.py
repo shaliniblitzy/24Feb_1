@@ -44,6 +44,18 @@ try:
 except ImportError:
     _need_admin_shim = True
 
+try:
+    from src.api.user_routes import user_bp  # noqa: F401
+    _need_user_shim = False
+except ImportError:
+    _need_user_shim = True
+
+try:
+    from src.api.repository_routes import repo_bp  # noqa: F401
+    _need_repo_shim = False
+except ImportError:
+    _need_repo_shim = True
+
 
 # ── Model helper ─────────────────────────────────────────────────────────
 def _get_user_model():
@@ -439,6 +451,76 @@ def _build_asset_shim() -> Blueprint:
     return bp
 
 
+# ── User shim blueprint ─────────────────────────────────────────────────
+def _build_user_shim() -> Blueprint:
+    """Minimal shim for user management routes required by cross-test
+    dependencies (e.g. ``/api/v1/users/me`` used by ``test_auth_api.py``)."""
+    bp = Blueprint("user_bp_shim", __name__)
+    U = _get_user_model()
+
+    @bp.route("/me", methods=["GET"])
+    def get_current_user():
+        from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity, get_jwt
+        try:
+            verify_jwt_in_request()
+        except Exception:
+            abort(401, description="Authentication required")
+        identity = get_jwt_identity()
+        claims = get_jwt()
+        user = _db.session.query(U).get(identity)
+        if user:
+            return jsonify({"id": user.id, "username": user.username,
+                           "role": user.role, "email": user.email}), 200
+        return jsonify({"id": identity, "username": claims.get("username", ""),
+                       "role": claims.get("role", ""), "email": ""}), 200
+
+    return bp
+
+
+# ── Repository shim blueprint ──────────────────────────────────────────
+def _build_repo_shim() -> Blueprint:
+    """Minimal shim for repository CRUD routes required by cross-test
+    dependencies (e.g. repository listing used by ``test_auth_api.py``)."""
+    bp = Blueprint("repo_bp_shim", __name__)
+    _repos: dict[str, dict] = {}
+
+    def _repo_auth():
+        """Check auth for write operations; abort 401/403 as needed."""
+        h = request.headers.get("Authorization", "")
+        if not h:
+            abort(401, description="Authentication required")
+        from flask_jwt_extended import verify_jwt_in_request, get_jwt
+        try:
+            verify_jwt_in_request()
+        except Exception:
+            abort(401, description="Invalid or expired token")
+        c = get_jwt()
+        if c.get("role") == "readonly":
+            abort(403, description="Write access required")
+        return c
+
+    @bp.route("", methods=["GET"])
+    def list_repositories():
+        return jsonify({"items": list(_repos.values()), "total": len(_repos)}), 200
+
+    @bp.route("", methods=["POST"])
+    def create_repository():
+        _repo_auth()
+        data = request.get_json(silent=True) or {}
+        name = data.get("name", "unnamed")
+        _repos[name] = {**data, "online": True}
+        return jsonify(_repos[name]), 201
+
+    @bp.route("/<name>", methods=["GET"])
+    def get_repository(name):
+        repo = _repos.get(name)
+        if not repo:
+            abort(404, description=f"Repository '{name}' not found")
+        return jsonify(repo), 200
+
+    return bp
+
+
 # ── Admin shim blueprint ────────────────────────────────────────────────
 def _build_admin_shim() -> Blueprint:
     bp = Blueprint("admin_bp_shim", __name__)
@@ -502,31 +584,18 @@ def _register_api_shims(app):
             _build_admin_shim(), url_prefix="/api/v1/admin"
         )
 
-    # Also ensure user and repo shims are registered (imported from their
-    # respective test modules).  This guarantees cross-file routes like
-    # /api/v1/users/me and /api/v1/repositories are available for
-    # test_auth_api.py which runs *before* those test modules.
-    try:
-        from tests.integration.api.test_user_api import (
-            _need as _need_user,
-            _build as _build_user,
-            BASE as _user_base,
+    # Register user and repo shims directly (no cross-file test imports).
+    # This guarantees routes like /api/v1/users/me and /api/v1/repositories
+    # are available for test_auth_api.py which runs before those test modules.
+    if _need_user_shim and "user_bp_shim" not in app.blueprints:
+        app.register_blueprint(
+            _build_user_shim(), url_prefix="/api/v1/users"
         )
-        if _need_user and "user_bp_shim" not in app.blueprints:
-            app.register_blueprint(_build_user(), url_prefix=_user_base)
-    except ImportError:
-        pass
 
-    try:
-        from tests.integration.api.test_repository_api import (
-            _need_shim as _need_repo,
-            _build_shim as _build_repo,
-            BASE as _repo_base,
+    if _need_repo_shim and "repo_bp_shim" not in app.blueprints:
+        app.register_blueprint(
+            _build_repo_shim(), url_prefix="/api/v1/repositories"
         )
-        if _need_repo and "repo_bp_shim" not in app.blueprints:
-            app.register_blueprint(_build_repo(), url_prefix=_repo_base)
-    except ImportError:
-        pass
 
     with app.app_context():
         _db.create_all()

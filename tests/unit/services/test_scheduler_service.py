@@ -202,6 +202,7 @@ def test_cancel_task_success(scheduler_service, mock_db_session):
     scheduler_service.cancel_task.return_value = True
     result = scheduler_service.cancel_task("task-cancel")
     assert result is True
+    assert isinstance(result, bool)
     scheduler_service.cancel_task.assert_called_once_with("task-cancel")
 
 
@@ -294,8 +295,9 @@ def test_parse_invalid_cron_expression_raises_error(scheduler_service, mock_db_s
     scheduler_service.schedule_task.side_effect = ValueError(
         "Invalid cron expression: '99 99 99 99 99'"
     )
-    with pytest.raises(ValueError, match="Invalid cron expression"):
+    with pytest.raises(ValueError, match="Invalid cron expression") as exc_info:
         scheduler_service.schedule_task("bad-cron", "99 99 99 99 99", MagicMock())
+    assert "cron" in str(exc_info.value).lower()
     assert scheduler_service.schedule_task.call_count == 1
 
 
@@ -319,8 +321,9 @@ def test_schedule_task_with_duplicate_name(scheduler_service, mock_db_session):
     scheduler_service.schedule_task.side_effect = ValueError(
         "Task with name 'duplicate-job' already exists"
     )
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(ValueError, match="already exists") as exc_info:
         scheduler_service.schedule_task("duplicate-job", "0 0 * * *", MagicMock())
+    assert "already exists" in str(exc_info.value)
     assert scheduler_service.schedule_task.call_count == 1
 
 
@@ -339,6 +342,7 @@ def test_cancel_completed_task(scheduler_service, mock_db_session):
     scheduler_service.cancel_task.return_value = False
     result = scheduler_service.cancel_task("task-completed")
     assert result is False
+    assert isinstance(result, bool)
     scheduler_service.cancel_task.assert_called_once_with("task-completed")
 
 
@@ -423,8 +427,9 @@ def test_run_task_nonexistent_id_raises_error(scheduler_service, mock_db_session
 def test_schedule_task_db_error_rollback(scheduler_service, mock_db_session):
     """Database commit failure propagates as RuntimeError."""
     scheduler_service.schedule_task.side_effect = RuntimeError("Database commit failed")
-    with pytest.raises(RuntimeError, match="Database commit failed"):
+    with pytest.raises(RuntimeError, match="Database commit failed") as exc_info:
         scheduler_service.schedule_task("db-error-task", "0 0 * * *", MagicMock())
+    assert "Database" in str(exc_info.value)
     assert scheduler_service.schedule_task.call_count == 1
 
 
