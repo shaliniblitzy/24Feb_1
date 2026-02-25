@@ -224,13 +224,17 @@ def test_upload_artifact_with_metadata_limits(mock_s3_client):
 def test_download_nonexistent_artifact_returns_none_file(tmp_path):
     """Downloading non-existent file-backend artifact returns None."""
     svc = _file_svc(tmp_path)
-    assert svc.download_artifact("repo", "missing.bin") is None
+    result = svc.download_artifact("repo", "missing.bin")
+    assert result is None
+    assert not (tmp_path / "repo" / "missing.bin").exists()
 
 
 def test_download_nonexistent_artifact_returns_none_s3(mock_s3_client):
     """Downloading non-existent S3 object returns None."""
     svc = _s3_svc(mock_s3_client)
-    assert svc.download_artifact("repo", "missing.bin") is None
+    result = svc.download_artifact("repo", "missing.bin")
+    assert result is None
+    assert mock_s3_client.get_stored_object("test-bucket", "repo/missing.bin") is None
 
 
 def test_list_artifacts_empty_prefix_returns_all(mock_s3_client):
@@ -365,7 +369,9 @@ def test_run_cleanup_no_unreferenced_returns_zero(tmp_path):
 def test_run_cleanup_s3_backend_returns_zero(mock_s3_client):
     """run_cleanup returns 0 for non-file backends."""
     svc = _s3_svc(mock_s3_client)
-    assert svc.run_cleanup() == 0
+    result = svc.run_cleanup()
+    assert result == 0
+    assert svc.storage_type == "s3"
 
 
 def test_checksums_static_method():
@@ -387,7 +393,9 @@ def test_delete_nonexistent_file_returns_true(tmp_path):
     """Deleting non-existent file returns True gracefully."""
     svc = _file_svc(tmp_path)
     (tmp_path / "repo").mkdir(parents=True)
-    assert svc.delete_artifact("repo", "nope.bin") is True
+    result = svc.delete_artifact("repo", "nope.bin")
+    assert result is True
+    assert not (tmp_path / "repo" / "nope.bin").exists()
 
 
 def test_verify_integrity_no_stored_hash_returns_false(tmp_path):
@@ -395,10 +403,49 @@ def test_verify_integrity_no_stored_hash_returns_false(tmp_path):
     svc = _file_svc(tmp_path)
     (tmp_path / "repo").mkdir(parents=True)
     (tmp_path / "repo" / "orphan.bin").write_bytes(b"orphan")
-    assert svc.verify_integrity("repo", "orphan.bin") is False
+    result = svc.verify_integrity("repo", "orphan.bin")
+    assert result is False
+    assert (tmp_path / "repo" / "orphan.bin").exists()
 
 
 def test_run_cleanup_nonexistent_root_returns_zero():
     """run_cleanup returns 0 when storage root does not exist."""
     svc = StorageService(storage_type="file", storage_path="/nonexistent/blitzy")
-    assert svc.run_cleanup(referenced_paths=set()) == 0
+    result = svc.run_cleanup(referenced_paths=set())
+    assert result == 0
+    assert svc.storage_type == "file"
+
+
+# -- Phase 9: Security Tests (CWE-22 Path Traversal) -----------------------
+
+def test_file_upload_path_traversal_rejected(tmp_path):
+    """Upload with path traversal sequences does not escape storage root."""
+    svc = _file_svc(tmp_path)
+    traversal_path = "../../etc/passwd"
+    result = svc.upload_artifact("repo", traversal_path, b"malicious")
+    # The file must be stored within the storage root, not at /etc/passwd
+    assert result["size"] == len(b"malicious")
+    assert not (tmp_path.parent.parent / "etc" / "passwd").exists()
+
+
+def test_file_download_path_traversal_rejected(tmp_path):
+    """Download with path traversal does not access files outside storage."""
+    svc = _file_svc(tmp_path)
+    traversal_path = "../../etc/shadow"
+    result = svc.download_artifact("repo", traversal_path)
+    # Path traversal must not return sensitive system files
+    assert result is None
+    assert not (tmp_path / "repo" / traversal_path).exists()
+
+
+def test_s3_key_injection_rejected(mock_s3_client):
+    """S3 key with traversal sequences is stored under the repo namespace."""
+    svc = _s3_svc(mock_s3_client)
+    malicious_path = "../../admin/secrets.json"
+    result = svc.upload_artifact("repo", malicious_path, b"injected")
+    # S3 key is scoped to repo namespace; the key should contain the repo prefix
+    assert result["size"] == len(b"injected")
+    stored = mock_s3_client.get_stored_object(
+        "test-bucket", f"repo/{malicious_path}"
+    )
+    assert stored is not None

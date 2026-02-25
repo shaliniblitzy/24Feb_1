@@ -1,6 +1,5 @@
 """
 Asset/Component data model unit tests for ``src/models/asset.py``.
-
 Covers instantiation, BlobStore references, metadata constraints, hash
 storage (SHA-1, SHA-256, MD5), repository relationship, serialisation,
 edge cases, error handling, and database persistence.
@@ -419,6 +418,7 @@ def test_asset_null_name_raises_error(db_session):
     with pytest.raises(IntegrityError):
         db_session.flush()
     db_session.rollback()
+    assert db_session.query(Asset).filter_by(path="/some/path").first() is None
 
 
 def test_asset_null_path_raises_error(db_session):
@@ -428,6 +428,7 @@ def test_asset_null_path_raises_error(db_session):
     with pytest.raises(IntegrityError):
         db_session.flush()
     db_session.rollback()
+    assert db_session.query(Asset).filter_by(name="test.jar").first() is None
 
 
 def test_asset_invalid_hash_format_stores_value():
@@ -439,8 +440,9 @@ def test_asset_invalid_hash_format_stores_value():
 
 def test_asset_negative_size_raises_error():
     """Negative size triggers a ValueError from the validates decorator."""
-    with pytest.raises(ValueError, match="cannot be negative"):
+    with pytest.raises(ValueError, match="cannot be negative") as exc_info:
         _make_asset(size=-1)
+    assert "negative" in str(exc_info.value).lower()
 
 
 # =========================================================================

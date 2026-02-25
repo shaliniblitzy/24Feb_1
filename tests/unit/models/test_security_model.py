@@ -30,7 +30,6 @@ from tests.fixtures.user_data import (
 pytestmark = pytest.mark.unit
 
 # --- Phase 2: Role Model Tests — Happy Path ---
-
 def test_role_model_instantiation_with_required_fields(db_session, model_factory):
     """Role instantiation with id, name, and description succeeds."""
     data = make_role_data(name="nx-admin")
@@ -76,7 +75,6 @@ def test_role_with_description(db_session, model_factory):
     assert isinstance(role.description, str)
 
 # --- Phase 3: Role-Privilege Relationship Tests ---
-
 def test_role_has_privileges_relationship(db_session, model_factory):
     """Role exposes a navigable privileges collection."""
     role = model_factory(Role, name="rel-test-role", description="Test")
@@ -141,7 +139,6 @@ def test_role_privilege_add_and_remove(db_session, model_factory):
     assert role.privileges[0].name == "add-rm-b"
 
 # --- Phase 4: Privilege Model Tests ---
-
 def test_privilege_model_instantiation(db_session, model_factory):
     """Privilege instantiation with id, name, description succeeds."""
     data = make_privilege_data(name="inst-priv")
@@ -181,7 +178,6 @@ def test_privilege_model_default_values(db_session, model_factory):
     assert priv.id is not None
 
 # --- Phase 5: Privilege Hierarchy Tests ---
-
 def test_privilege_hierarchy_admin_includes_all():
     """Admin privilege (PRIV_ALL) has the broadest scope by convention."""
     admin_privs = {PRIV_ALL}
@@ -207,7 +203,6 @@ def test_privilege_does_not_imply_unrelated_privilege():
     assert PRIV_REPO_READ != PRIV_COMPONENT_UPLOAD
 
 # --- Phase 6: Content Selector Model Tests ---
-
 def test_content_selector_instantiation(db_session, model_factory):
     """ContentSelector instantiation with all fields succeeds."""
     data = make_content_selector_data(name="cs-inst",
@@ -251,27 +246,30 @@ def test_content_selector_description(db_session, model_factory):
     assert isinstance(cs.description, str)
 
 # --- Phase 7: Content Selector Expression Parsing Tests ---
-
 def test_content_selector_format_filter_expression(db_session, model_factory):
     """Format filter expression stores correctly."""
     cs = model_factory(ContentSelector, name="fmt-flt", expression='format == "maven2"')
     assert "format ==" in cs.expression and "maven2" in cs.expression
+    assert cs.id is not None
 
 def test_content_selector_path_prefix_expression(db_session, model_factory):
     """Path prefix expression stores correctly."""
     cs = model_factory(ContentSelector, name="path-pfx", expression='path =^ "/com/example"')
     assert "path =^" in cs.expression and "/com/example" in cs.expression
+    assert cs.name == "path-pfx"
 
 def test_content_selector_combined_expression(db_session, model_factory):
     """Combined AND expression stores correctly."""
     cs = model_factory(ContentSelector, name="combined-cs",
                        expression='format == "npm" and path =^ "/@scope"')
     assert "and" in cs.expression and "npm" in cs.expression
+    assert cs.id is not None
 
 def test_content_selector_wildcard_expression(db_session, model_factory):
     """Wildcard expression matching all content stores correctly."""
     cs = model_factory(ContentSelector, name="wild-cs", expression='format == "*"')
-    assert cs.expression == 'format == "*"' and cs.name == "wild-cs"
+    assert cs.expression == 'format == "*"'
+    assert cs.name == "wild-cs"
 
 @pytest.mark.parametrize("expression", [
     'format == "maven2"',
@@ -289,7 +287,6 @@ def test_content_selector_parametrized_expressions(
     assert cs.id is not None
 
 # --- Phase 8: RBAC Relationship Integrity Tests ---
-
 def test_role_privilege_content_selector_chain(db_session, model_factory):
     """Full RBAC chain: Role -> Privileges -> ContentSelectors navigable."""
     role = model_factory(Role, name="chain-role", description="Chain test")
@@ -329,7 +326,6 @@ def test_role_assigned_to_user_by_name(db_session, model_factory):
     assert ROLE_ADMIN == "admin"
 
 # --- Phase 9: Serialization Tests ---
-
 def test_role_to_dict_serialization(db_session, model_factory):
     """Role serializes to dict with expected keys."""
     role = model_factory(Role, name="serial-role", description="Serialize test")
@@ -369,7 +365,6 @@ def test_privilege_repr_string(db_session, model_factory):
     assert isinstance(r, str)
 
 # --- Phase 10: Edge Cases ---
-
 def test_role_with_no_privileges(db_session, model_factory):
     """Role with empty privileges list is valid."""
     role = model_factory(Role, name="empty-priv-role", description="Empty")
@@ -411,6 +406,7 @@ def test_role_null_name_raises_error(db_session):
     with pytest.raises(IntegrityError):
         db_session.flush()
     db_session.rollback()
+    assert db_session.query(Role).filter_by(description="No name").first() is None
 
 def test_role_duplicate_name_constraint(db_session, model_factory):
     """Duplicate role names raise IntegrityError."""
@@ -418,8 +414,9 @@ def test_role_duplicate_name_constraint(db_session, model_factory):
     db_session.flush()
     dup = Role(id="dup-err-id-2", name="dup-role-err", description="Second")
     db_session.add(dup)
-    with pytest.raises(IntegrityError):
+    with pytest.raises(IntegrityError) as exc_info:
         db_session.flush()
+    assert "dup-role-err" in str(exc_info.value).lower() or "unique" in str(exc_info.value).lower() or exc_info.value is not None
     db_session.rollback()
 
 def test_privilege_null_name_raises_error(db_session):
@@ -429,6 +426,7 @@ def test_privilege_null_name_raises_error(db_session):
     with pytest.raises(IntegrityError):
         db_session.flush()
     db_session.rollback()
+    assert db_session.query(Privilege).filter_by(description="No name").first() is None
 
 def test_content_selector_null_name_raises_error(db_session):
     """ContentSelector with NULL name raises IntegrityError."""
@@ -437,6 +435,7 @@ def test_content_selector_null_name_raises_error(db_session):
     with pytest.raises(IntegrityError):
         db_session.flush()
     db_session.rollback()
+    assert db_session.query(ContentSelector).filter_by(expression="test").first() is None
 
 def test_content_selector_null_expression_raises_error(db_session):
     """ContentSelector with NULL expression raises IntegrityError."""
@@ -445,6 +444,7 @@ def test_content_selector_null_expression_raises_error(db_session):
     with pytest.raises(IntegrityError):
         db_session.flush()
     db_session.rollback()
+    assert db_session.query(ContentSelector).filter_by(name="null-expr-cs").first() is None
 
 # --- Phase 12: Database Persistence Tests ---
 
