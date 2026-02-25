@@ -1,0 +1,167 @@
+# ============================================
+# Nexus Repository Manager — Production Configuration
+# ============================================
+# Overrides default.yaml for production environments.
+# IMPORTANT: Set all credentials via environment variables, not in this file.
+# Per AAP Section 0.7.2: "Zero Plaintext Credential Storage."
+#
+# Supports two production deployment models:
+#   - Clustered: PostgreSQL + Shared Filesystem
+#   - Container-Native: PostgreSQL + S3
+#
+# Configuration hierarchy:
+#   default.yaml -> production.yaml -> environment variables (highest priority)
+#
+# Required environment variables for production:
+#   DATABASE_URL      — PostgreSQL connection string
+#   SECRET_KEY        — Flask secret key for session signing
+#   JWT_SECRET        — JWT token signing secret
+#   S3_BUCKET         — S3 bucket name (if using S3 BlobStore)
+#   S3_ACCESS_KEY_ID  — S3 access key (or use IAM roles)
+#   S3_SECRET_ACCESS_KEY — S3 secret key (or use IAM roles)
+#   LDAP_URL          — LDAP server URL (if using LDAP auth)
+#   LDAP_BASE_DN      — LDAP base distinguished name
+#   LDAP_BIND_DN      — LDAP bind distinguished name
+#   LDAP_BIND_PASSWORD — LDAP bind password
+# ============================================
+
+# --- Application Settings ---
+# Debug and testing MUST be disabled in production for security.
+# SECRET_KEY MUST be set via the SECRET_KEY environment variable.
+app:
+  debug: false
+  testing: false
+  # secret_key: <set via SECRET_KEY env var>
+
+# --- Database Configuration ---
+# PostgreSQL is required for production deployments.
+# Replaces: HikariCP 4.0.3 connection pool configuration.
+# DATABASE_URL MUST be set via environment variable.
+# Example: postgresql://nexus:password@db-host:5432/nexus
+#
+# Pool settings are tuned for production PostgreSQL workloads:
+#   pool_size=20 with max_overflow=40 allows up to 60 concurrent connections,
+#   exceeding the HikariCP 4.0.3 default of 10 max connections.
+#   pool_recycle=1800 prevents stale connections behind load balancers.
+#   pool_pre_ping=true validates connections before use to handle failovers.
+database:
+  # url: <set via DATABASE_URL env var>
+  echo: false
+  track_modifications: false
+  engine_options:
+    pool_size: 20
+    max_overflow: 40
+    pool_timeout: 30
+    pool_recycle: 1800
+    pool_pre_ping: true
+
+# --- BlobStore Configuration ---
+# Default to S3 for container-native deployments.
+# Override blobstore_type to "file" and set blobstore_path for clustered
+# deployments using shared filesystem (NFS/EFS).
+storage:
+  blobstore_type: "s3"
+  blobstore_path: "/data/blobs"
+
+# --- S3 BlobStore Settings ---
+# All credentials MUST be set via environment variables or IAM roles.
+# IAM instance profiles / EKS IRSA are the recommended authentication method.
+# Supports SSE-S3 (default) and SSE-KMS (set kms_key_arn for customer-managed keys).
+s3:
+  # bucket: <set via S3_BUCKET env var>
+  region: "us-east-1"
+  # access_key_id: <set via S3_ACCESS_KEY_ID env var or use IAM roles>
+  # secret_access_key: <set via S3_SECRET_ACCESS_KEY env var or use IAM roles>
+  encryption: "SSE-S3"
+  kms_key_arn: ""
+
+# --- JWT Authentication ---
+# JWT_SECRET MUST be set via environment variable.
+# HS256 is used by default; switch to RS256 for asymmetric key signing if needed.
+jwt:
+  # secret: <set via JWT_SECRET env var>
+  algorithm: "HS256"
+  expiration_hours: 24
+
+# --- LDAP Configuration ---
+# Set via environment variables if LDAP/Active Directory authentication is required.
+# TLS is enforced by default in production for secure LDAP communication.
+ldap:
+  # url: <set via LDAP_URL env var>
+  # base_dn: <set via LDAP_BASE_DN env var>
+  user_search_filter: "(uid={0})"
+  # bind_dn: <set via LDAP_BIND_DN env var>
+  # bind_password: <set via LDAP_BIND_PASSWORD env var>
+  use_tls: true
+
+# --- SAML/OIDC Configuration ---
+# Set via environment variables if SSO federation is required.
+# Disabled by default (empty values).
+saml:
+  idp_metadata_url: ""
+oidc:
+  client_id: ""
+  client_secret: ""
+  discovery_url: ""
+
+# --- Search Configuration ---
+# Elasticsearch for production — handles higher scale than Whoosh.
+# Replaces: Elasticsearch 2.4.3 from the original Java stack.
+# Set elasticsearch_url via environment variable if not on localhost.
+search:
+  backend: "elasticsearch"
+  whoosh_index_path: "/data/search"
+  elasticsearch_url: "http://localhost:9200"
+
+# --- Scheduler Settings ---
+# APScheduler with persistent SQLAlchemy job store for production.
+# jobstore_url defaults to the DATABASE_URL if not explicitly set.
+scheduler:
+  enabled: true
+  # jobstore_url: <defaults to DATABASE_URL if not set>
+
+# --- Metrics and Observability ---
+# Prometheus metrics collection is enabled for production monitoring.
+# Metrics are exposed at /service/metrics in Prometheus text format.
+metrics:
+  enabled: true
+
+# --- Logging ---
+# INFO level balances visibility with performance in production.
+# JSON format enables structured log aggregation and SIEM integration
+# (AAP Section 0.7.5: "Structured JSON Logging").
+logging:
+  level: "INFO"
+  format: "json"
+
+# --- SSL/TLS ---
+# Configure via environment variables for TLS termination at the app level.
+# In most production deployments, TLS is terminated at the load balancer
+# or reverse proxy (Nginx/HAProxy), making these settings optional.
+ssl:
+  cert_path: ""
+  key_path: ""
+  truststore_path: ""
+
+# --- SIEM Integration ---
+# Configure via environment variables for audit log forwarding.
+# When endpoint is set, audit events are forwarded in real-time.
+siem:
+  endpoint: ""
+  token: ""
+
+# --- Gunicorn Tuning ---
+# Production WSGI server configuration.
+# Replaces: Jetty 12.0.5 embedded server.
+# Tuned for the C-001 resource constraint (4 CPU / 4 GB RAM):
+#   workers=4 matches CPU count for optimal parallelism.
+#   threads=2 per worker for I/O-bound request handling.
+#   timeout=120 accommodates large artifact uploads.
+#   graceful_timeout=30 allows in-flight requests to complete on shutdown.
+#   keepalive=5 reduces connection overhead for persistent clients.
+gunicorn:
+  workers: 4
+  threads: 2
+  timeout: 120
+  graceful_timeout: 30
+  keepalive: 5
