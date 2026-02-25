@@ -1,0 +1,31 @@
+{
+  "name": "@scope/test-package",
+  "version": "1.0.0",
+  "description": "A minimal test package for npm format handler testing",
+  "main": "index.js",
+  "keywords": [
+    "test",
+    "sample",
+    "fixture"
+  ],
+  "author": "Test Author <test@example.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://example.com/scope/test-package.git"
+  },
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "mocha": "^10.2.0"
+  },
+  "scripts": {
+    "test": "mocha",
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
