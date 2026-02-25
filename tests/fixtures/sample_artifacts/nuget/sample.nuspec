@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>TestPackage</id>
+    <version>1.0.0</version>
+    <authors>Test Author</authors>
+    <description>A minimal test NuGet package for testing the Nexus Repository NuGet format handler.</description>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+  </metadata>
+</package>
