@@ -1,38 +1,123 @@
 """
-Marshmallow serialization schemas for the Nexus Repository Flask application.
+Marshmallow serialization schemas for the Nexus Repository application.
 
-Replaces Jackson 2.16.1 JSON DTOs from the Java source. Provides request/response
-serialization for all REST API endpoints using Marshmallow 3.x.
+This package contains Marshmallow 3.x schema definitions for all API
+request/response objects, replacing Jackson 2.16.1 JSON serialization
+from the Java source system.
 
-Modules:
-- ``repository.py``:  Repository CRUD request/response schemas
-- ``asset.py``:       Asset metadata schemas
-- ``system.py``:      System configuration schemas
-- ``component.py``:   Component schemas (future checkpoint)
-- ``user.py``:        User schemas (future checkpoint)
-- ``role.py``:        Role schemas (future checkpoint)
-- ``task.py``:        Task schemas (future checkpoint)
-- ``search.py``:      Search query/result schemas (future checkpoint)
+Each schema mirrors a corresponding SQLAlchemy model from src.app.models/
+and defines field types with validation constraints, nested relationships,
+load/dump transformations, and custom field validators.
+
+Schemas are organized by entity type:
+- repository.py — Repository CRUD schemas
+- component.py — Component search and detail schemas
+- asset.py — Asset metadata schemas
+- user.py — User management schemas
+- role.py — Role and privilege assignment schemas
+- task.py — Task scheduling and execution schemas
+- system.py — System configuration and status schemas
+- search.py — Search query and result schemas
 """
 
-from src.app.schemas.repository import (  # noqa: F401
+# ---------------------------------------------------------------------------
+# Repository schemas (F-101, F-102, F-501-RQ-001)
+# ---------------------------------------------------------------------------
+from src.app.schemas.repository import (
     RepositoryCreateSchema,
     RepositoryUpdateSchema,
     RepositoryResponseSchema,
 )
-from src.app.schemas.asset import AssetSchema  # noqa: F401
-from src.app.schemas.system import SystemConfigSchema  # noqa: F401
-from src.app.schemas.role import (  # noqa: F401
+
+# ---------------------------------------------------------------------------
+# Component schemas (F-103, F-501-RQ-002)
+# ---------------------------------------------------------------------------
+from src.app.schemas.component import (
+    ComponentSchema,
+    ComponentSearchResultSchema,
+)
+
+# ---------------------------------------------------------------------------
+# Asset schemas (F-204, F-501-RQ-002)
+# ---------------------------------------------------------------------------
+from src.app.schemas.asset import (
+    AssetSchema,
+    AssetResponseSchema,
+)
+
+# ---------------------------------------------------------------------------
+# User schemas (F-301, F-501-RQ-003)
+# ---------------------------------------------------------------------------
+from src.app.schemas.user import (
+    UserCreateSchema,
+    UserUpdateSchema,
+    UserResponseSchema,
+)
+
+# ---------------------------------------------------------------------------
+# Role schemas (F-301, F-501-RQ-003)
+# ---------------------------------------------------------------------------
+from src.app.schemas.role import (
     RoleSchema,
     RoleAssignmentSchema,
 )
-from src.app.schemas.task import (  # noqa: F401
-    TaskCreateSchema,
+
+# ---------------------------------------------------------------------------
+# Task schemas (F-402, F-501-RQ-004)
+# ---------------------------------------------------------------------------
+from src.app.schemas.task import (
     TaskDefinitionSchema,
     TaskExecutionSchema,
+    TaskCreateSchema,
 )
-from src.app.schemas.search import (  # noqa: F401
+
+# ---------------------------------------------------------------------------
+# System schemas (F-401, F-404, F-501-RQ-004)
+# ---------------------------------------------------------------------------
+from src.app.schemas.system import (
+    SystemConfigSchema,
+    SystemStatusSchema,
+    LicenseInfoSchema,
+)
+
+# ---------------------------------------------------------------------------
+# Search schemas (F-103)
+# ---------------------------------------------------------------------------
+from src.app.schemas.search import (
     SearchQuerySchema,
     SearchResultSchema,
 )
 
+# ---------------------------------------------------------------------------
+# Public API — all schema classes available via ``from src.app.schemas import *``
+# ---------------------------------------------------------------------------
+__all__ = [
+    # Repository
+    "RepositoryCreateSchema",
+    "RepositoryUpdateSchema",
+    "RepositoryResponseSchema",
+    # Component
+    "ComponentSchema",
+    "ComponentSearchResultSchema",
+    # Asset
+    "AssetSchema",
+    "AssetResponseSchema",
+    # User
+    "UserCreateSchema",
+    "UserUpdateSchema",
+    "UserResponseSchema",
+    # Role
+    "RoleSchema",
+    "RoleAssignmentSchema",
+    # Task
+    "TaskDefinitionSchema",
+    "TaskExecutionSchema",
+    "TaskCreateSchema",
+    # System
+    "SystemConfigSchema",
+    "SystemStatusSchema",
+    "LicenseInfoSchema",
+    # Search
+    "SearchQuerySchema",
+    "SearchResultSchema",
+]
