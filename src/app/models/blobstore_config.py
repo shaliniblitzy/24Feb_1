@@ -180,6 +180,7 @@ class BlobStoreConfig(BaseModel, TimestampMixin, JSONAttributesMixin):
         BigInteger,
         nullable=True,
         default=0,
+        server_default="0",
         doc="Total storage consumed in bytes. BigInteger for petabyte-scale.",
     )
 
@@ -187,6 +188,7 @@ class BlobStoreConfig(BaseModel, TimestampMixin, JSONAttributesMixin):
         BigInteger,
         nullable=True,
         default=0,
+        server_default="0",
         doc="Total number of blobs stored in this BlobStore.",
     )
 

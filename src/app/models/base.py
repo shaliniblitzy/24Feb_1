@@ -382,21 +382,43 @@ class BaseModel(db.Model):
     __abstract__: bool = True
     __allow_unmapped__: bool = True
 
+    #: Class-level set of field names that should be excluded from
+    #: ``to_dict()`` by default.  Subclasses can override this to hide
+    #: sensitive fields (e.g., ``password_hash``, ``api_key``) without
+    #: requiring callers to pass ``exclude`` explicitly every time.
+    _hidden_fields: set[str] = set()
+
     # -- Serialization -------------------------------------------------------
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, exclude: set[str] | None = None) -> dict[str, Any]:
         """Convert this model instance to a plain dictionary.
 
         Iterates over all mapped columns and copies their values into a dict.
         ``datetime`` values are serialized to ISO-8601 strings for JSON
         compatibility.
 
+        Columns listed in the class-level ``_hidden_fields`` set or the
+        caller-supplied ``exclude`` set are omitted from the output.  This
+        prevents accidental leakage of sensitive data (e.g., password hashes,
+        API keys) through API responses or log messages.
+
+        Args:
+            exclude: Optional set of column names to omit from the output.
+                Merged with the class-level ``_hidden_fields`` set.
+
         Returns:
-            A dictionary mapping column names to their current values.
+            A dictionary mapping column names to their current values,
+            with excluded fields removed.
         """
+        excluded: set[str] = set(self._hidden_fields)
+        if exclude:
+            excluded |= exclude
+
         result: dict[str, Any] = {}
         mapper = inspect(self.__class__)
         for column in mapper.columns:
+            if column.key in excluded:
+                continue
             value: Any = getattr(self, column.key)
             if isinstance(value, datetime):
                 value = value.isoformat()

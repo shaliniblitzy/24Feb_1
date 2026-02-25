@@ -155,15 +155,20 @@ class Asset(BaseModel, TimestampMixin, SoftDeleteMixin, JSONAttributesMixin):
         ),
         db.Index("ix_assets_last_downloaded", "last_downloaded"),
         db.Index("ix_assets_content_type", "content_type"),
+        db.Index("ix_assets_component_id", "component_id"),
     )
 
     # -- Primary Key ---------------------------------------------------------
 
     id: int = Column(
-        Integer,
+        BigInteger,
         primary_key=True,
         autoincrement=True,
-        doc="Unique auto-incrementing identifier for this asset.",
+        doc=(
+            "Unique auto-incrementing identifier for this asset.  Uses "
+            "BigInteger to support large repositories with millions of assets "
+            "without overflow (Integer max ~2.1B is insufficient)."
+        ),
     )
 
     # -- Foreign Keys --------------------------------------------------------
@@ -172,11 +177,11 @@ class Asset(BaseModel, TimestampMixin, SoftDeleteMixin, JSONAttributesMixin):
         Integer,
         ForeignKey("components.id", ondelete="SET NULL"),
         nullable=True,
-        index=True,
         doc=(
             "Foreign key to the parent Component.  Nullable because standalone "
             "metadata files (e.g., maven-metadata.xml, Packages.gz) have no "
-            "parent component."
+            "parent component.  Indexed via ix_assets_component_id in "
+            "__table_args__."
         ),
     )
 

@@ -61,10 +61,12 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import ctypes
 import io
 import json
 import logging
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -116,11 +118,11 @@ For example, a script named ``my_task`` is stored under the key
 ALLOWED_BUILTINS: set[str] = {
     "abs", "all", "any", "bool", "bytes", "callable", "chr", "dict",
     "dir", "divmod", "enumerate", "filter", "float", "format",
-    "frozenset", "getattr", "hasattr", "hash", "hex", "id", "int",
+    "frozenset", "hash", "hex", "id", "int",
     "isinstance", "issubclass", "iter", "len", "list", "map", "max",
-    "min", "next", "object", "oct", "ord", "pow", "print", "range",
+    "min", "next", "oct", "ord", "pow", "print", "range",
     "repr", "reversed", "round", "set", "slice", "sorted", "str",
-    "sum", "tuple", "type", "zip",
+    "sum", "tuple", "zip",
 }
 """Set of Python builtin function names allowed inside the sandbox.
 
@@ -128,6 +130,13 @@ Dangerous builtins are explicitly excluded:
 ``open``, ``exec``, ``eval``, ``compile``, ``__import__``, ``globals``,
 ``locals``, ``vars``, ``delattr``, ``setattr``, ``breakpoint``,
 ``exit``, ``quit``, ``input``, ``memoryview``, ``super``.
+
+Additionally, ``object``, ``getattr``, ``hasattr``, and ``type`` are excluded
+to prevent sandbox escape via Python's object introspection chain.  With
+``object`` and ``getattr`` available, a script can call
+``object.__subclasses__()`` to enumerate all loaded classes, locate module
+loaders, and achieve arbitrary code execution — bypassing AST-level checks
+entirely (CWE-94).
 """
 
 FORBIDDEN_AST_NODES: set[type] = {
@@ -740,11 +749,20 @@ class ScriptService:
             - ``execution_id``— Unique identifier for this execution run.
 
         Raises:
-            ScriptError: If the script is not found.
+            ScriptError: If the script is not found or scripting is disabled.
             ScriptValidationError: If re-validation fails.
             ScriptExecutionError: If the script raises an exception.
             ScriptTimeoutError: If execution exceeds ``MAX_EXECUTION_TIME``.
         """
+        # Enforce scripting enablement — scripts cannot be executed when
+        # scripting is disabled in system configuration.
+        if not self.is_scripting_enabled():
+            raise ScriptError(
+                "Scripting is disabled. Enable via system configuration "
+                "'system.scripting.enabled' or SCRIPTING_ENABLED env var.",
+                details={"name": name, "reason": "scripting_disabled"},
+            )
+
         # Retrieve the script
         script_data: dict | None = self.get_script(name)
         if script_data is None:
@@ -804,10 +822,19 @@ class ScriptService:
             ``execute_script()``, with ``name`` set to ``'<inline>'``.
 
         Raises:
+            ScriptError: If scripting is disabled.
             ScriptValidationError: If the content fails validation.
             ScriptExecutionError: If the script raises an exception.
             ScriptTimeoutError: If execution exceeds ``MAX_EXECUTION_TIME``.
         """
+        # Enforce scripting enablement
+        if not self.is_scripting_enabled():
+            raise ScriptError(
+                "Scripting is disabled. Enable via system configuration "
+                "'system.scripting.enabled' or SCRIPTING_ENABLED env var.",
+                details={"reason": "scripting_disabled"},
+            )
+
         # Size check
         if len(content.encode("utf-8")) > MAX_SCRIPT_SIZE:
             raise ScriptValidationError(
@@ -843,8 +870,13 @@ class ScriptService:
         """Core sandbox execution logic shared by execute_script and run_inline.
 
         Builds a restricted execution environment, captures stdout,
-        compiles and executes the script, measures duration, and enforces
-        the timeout limit.
+        compiles and executes the script in a **separate daemon thread**
+        with a pre-emptive timeout.  If the script exceeds
+        ``MAX_EXECUTION_TIME`` seconds, the thread is interrupted via
+        ``PyThreadState_SetAsyncExc`` and a ``ScriptTimeoutError`` is raised.
+
+        This approach prevents infinite loops and runaway CPU-bound scripts
+        from hanging the worker process indefinitely (CWE-400 mitigation).
 
         Args:
             content: Python source code.
@@ -860,17 +892,18 @@ class ScriptService:
             ScriptExecutionError: On runtime errors.
             ScriptTimeoutError: On timeout violations.
         """
-        # Build restricted builtins dict
+        # Build restricted builtins dict using safe attribute access
+        # (we use the module-level __builtins__ reference directly)
+        builtins_ref = __builtins__
         raw_builtins: dict[str, Any] = {}
         for builtin_name in ALLOWED_BUILTINS:
-            if isinstance(__builtins__, dict):
-                if builtin_name in __builtins__:
-                    raw_builtins[builtin_name] = __builtins__[builtin_name]
+            if isinstance(builtins_ref, dict):
+                if builtin_name in builtins_ref:
+                    raw_builtins[builtin_name] = builtins_ref[builtin_name]
             else:
-                if hasattr(__builtins__, builtin_name):
-                    raw_builtins[builtin_name] = getattr(
-                        __builtins__, builtin_name
-                    )
+                obj = getattr(builtins_ref, builtin_name, None)
+                if obj is not None:
+                    raw_builtins[builtin_name] = obj
 
         # Inject a safe 'log' helper bound to the script logger
         script_logger = logging.getLogger(f"script.{script_name}")
@@ -888,17 +921,82 @@ class ScriptService:
 
         stdout_capture = io.StringIO()
 
+        # Container dicts for thread communication (mutable from inner scope)
+        thread_result: dict[str, Any] = {}
+        thread_error: dict[str, Any] = {}
+
+        def _run_script() -> None:
+            """Execute the compiled script in the restricted globals.
+
+            Runs inside a daemon thread so it can be interrupted on timeout.
+            """
+            try:
+                compiled = compile(
+                    content, f"<script:{script_name}>", "exec"
+                )
+                with contextlib.redirect_stdout(stdout_capture):
+                    exec(compiled, exec_globals)  # noqa: S102 — sandboxed exec
+                thread_result["success"] = True
+            except Exception as exc:
+                thread_error["exception"] = exc
+
         start_time: float = time.monotonic()
 
-        try:
-            compiled = compile(content, f"<script:{script_name}>", "exec")
-            with contextlib.redirect_stdout(stdout_capture):
-                exec(compiled, exec_globals)  # noqa: S102 — intentional sandboxed exec
-        except ScriptValidationError:
-            # Re-raise validation errors as-is
-            raise
-        except Exception as exc:
-            elapsed: float = time.monotonic() - start_time
+        # Run the script in a daemon thread with a timeout join
+        script_thread = threading.Thread(
+            target=_run_script,
+            name=f"script-{execution_id[:8]}",
+            daemon=True,
+        )
+        script_thread.start()
+        script_thread.join(timeout=MAX_EXECUTION_TIME)
+
+        elapsed: float = time.monotonic() - start_time
+
+        # Check if the thread is still alive — pre-emptive timeout
+        if script_thread.is_alive():
+            self.logger.warning(
+                "Script '%s' exceeded timeout (%.3fs > %ds); "
+                "interrupting thread.",
+                script_name, elapsed, MAX_EXECUTION_TIME,
+            )
+
+            # Attempt to force-interrupt the thread by injecting a
+            # SystemExit exception into the thread's execution frame.
+            # This works for Python-level code (loops, function calls)
+            # but NOT for blocking C extensions or I/O syscalls.
+            try:
+                thread_id = script_thread.ident
+                if thread_id is not None:
+                    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                        ctypes.c_ulong(thread_id),
+                        ctypes.py_object(SystemExit),
+                    )
+                    if res > 1:
+                        # If it returns > 1, the call was invalid — reset it
+                        ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                            ctypes.c_ulong(thread_id), None
+                        )
+            except Exception:
+                self.logger.debug(
+                    "Failed to async-interrupt script thread for '%s'.",
+                    script_name,
+                )
+
+            raise ScriptTimeoutError(
+                f"Script '{script_name}' exceeded maximum execution time "
+                f"of {MAX_EXECUTION_TIME} seconds.",
+                details={
+                    "name": script_name,
+                    "execution_id": execution_id,
+                    "elapsed_seconds": round(elapsed, 3),
+                    "limit_seconds": MAX_EXECUTION_TIME,
+                },
+            )
+
+        # Check for exceptions raised within the thread
+        if "exception" in thread_error:
+            exc = thread_error["exception"]
             self.logger.error(
                 "Script '%s' execution failed after %.3fs: %s",
                 script_name, elapsed, str(exc),
@@ -912,25 +1010,6 @@ class ScriptService:
                     "elapsed_seconds": round(elapsed, 3),
                 },
             ) from exc
-
-        elapsed = time.monotonic() - start_time
-
-        # Timeout enforcement (post-execution check)
-        if elapsed > MAX_EXECUTION_TIME:
-            self.logger.warning(
-                "Script '%s' exceeded timeout: %.3fs > %ds.",
-                script_name, elapsed, MAX_EXECUTION_TIME,
-            )
-            raise ScriptTimeoutError(
-                f"Script '{script_name}' exceeded maximum execution time "
-                f"of {MAX_EXECUTION_TIME} seconds.",
-                details={
-                    "name": script_name,
-                    "execution_id": execution_id,
-                    "elapsed_seconds": round(elapsed, 3),
-                    "limit_seconds": MAX_EXECUTION_TIME,
-                },
-            )
 
         duration_ms: int = int(elapsed * 1000)
         output: str = stdout_capture.getvalue()

@@ -152,6 +152,7 @@ class ContentSelector(BaseModel, TimestampMixin, JSONAttributesMixin):
         String(20),
         nullable=False,
         default="csel",
+        server_default="csel",
         doc=(
             "Expression language type: 'csel' (modern, default) or "
             "'jexl' (legacy).  Determines how the expression column "

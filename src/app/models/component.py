@@ -147,14 +147,12 @@ class Component(BaseModel, TimestampMixin, SoftDeleteMixin, JSONAttributesMixin)
 
     repository_name: str = Column(
         String(200),
-        ForeignKey("repositories.name", ondelete="CASCADE", onupdate="CASCADE"),
+        ForeignKey("repositories.name"),
         nullable=False,
         index=True,
         doc=(
             "Foreign key reference to the owning repository.  Every "
-            "component belongs to exactly one repository.  The cascade "
-            "rules ensure that when a repository is deleted or renamed, "
-            "its components are also affected."
+            "component belongs to exactly one repository."
         ),
     )
 

@@ -33,7 +33,8 @@ DataStore schema (Section 6.2.1.2) with a SQLAlchemy ORM model.
 **Architecture Context:**
 
 - Replaces ``MyBatis 3.5.15`` USER entity mapper from the Java source.
-- Password hashing uses Werkzeug utilities (replacing BouncyCastle 1.78.1).
+- Password hashing uses ``src.app.auth.password_utils`` (bcrypt/scrypt),
+  replacing BouncyCastle 1.78.1 from the Java source.
 - Supports both SQLite (standalone) and PostgreSQL (clustered) deployments
   via portable SQLAlchemy column types only.
 - Integrates with the multi-backend authentication chain described in AAP
@@ -55,8 +56,6 @@ from typing import Any, List, Optional
 
 from sqlalchemy import Column, DateTime, Integer, String
 from sqlalchemy.orm import relationship
-
-from werkzeug.security import check_password_hash, generate_password_hash
 
 from src.app.extensions import db
 from src.app.models.base import (
@@ -183,6 +182,7 @@ class User(BaseModel, TimestampMixin, SoftDeleteMixin, JSONAttributesMixin):
         String(20),
         nullable=False,
         default=DEFAULT_STATUS,
+        server_default="active",
         doc=(
             "Account status.  Valid values: 'active', 'disabled', 'locked'.  "
             "'locked' results from exceeding the failed-login threshold."
@@ -223,8 +223,9 @@ class User(BaseModel, TimestampMixin, SoftDeleteMixin, JSONAttributesMixin):
 
     failed_login_count: int = Column(
         Integer,
-        nullable=False,
+        nullable=True,
         default=0,
+        server_default="0",
         doc=(
             "Counter of consecutive failed login attempts.  Reset to 0 on "
             "successful login.  When this reaches MAX_FAILED_LOGIN_ATTEMPTS "
@@ -384,23 +385,47 @@ class User(BaseModel, TimestampMixin, SoftDeleteMixin, JSONAttributesMixin):
     def set_password(self, password: str) -> None:
         """Hash *password* and store in ``password_hash``.
 
-        Uses Werkzeug's ``generate_password_hash`` which defaults to
-        ``scrypt`` (or ``pbkdf2:sha256`` where scrypt is unavailable).
-        This replaces BouncyCastle 1.78.1 from the Java source.
+        Uses ``src.app.auth.password_utils.hash_password()`` which provides
+        bcrypt (primary) or scrypt (fallback) hashing, replacing BouncyCastle
+        1.78.1 from the Java source.  Password strength is validated before
+        hashing to prevent weak passwords from being set programmatically.
 
         Args:
             password: The plaintext password to hash.
 
         Raises:
-            ValueError: If *password* is empty or ``None``.
+            ValueError: If *password* is empty, ``None``, or fails strength
+                validation.
         """
         if not password:
             raise ValueError("Password cannot be empty or None.")
-        self.password_hash = generate_password_hash(password)
+
+        # Import here to avoid circular imports at module load time.
+        from src.app.auth.password_utils import (
+            hash_password,
+            validate_password_strength,
+        )
+
+        # Validate password strength before hashing (defence-in-depth).
+        # validate_password_strength returns (valid: bool, errors: list[str]).
+        # Raises ValueError with descriptive messages if the password is
+        # too weak, allowing callers to surface the error to users.
+        is_valid, errors = validate_password_strength(password)
+        if not is_valid:
+            raise ValueError(
+                "Password does not meet strength requirements: "
+                + "; ".join(errors)
+            )
+
+        self.password_hash = hash_password(password)
         logger.info("Password updated for user '%s'.", self.user_id)
 
     def check_password(self, password: str) -> bool:
         """Verify *password* against the stored ``password_hash``.
+
+        Uses ``src.app.auth.password_utils.verify_password()`` which
+        auto-detects the hashing algorithm (bcrypt or scrypt) from the
+        stored hash format and uses constant-time comparison.
 
         Returns ``False`` (rather than raising) when:
         - The user has no local password set (external-only user).
@@ -421,7 +446,11 @@ class User(BaseModel, TimestampMixin, SoftDeleteMixin, JSONAttributesMixin):
             return False
         if not password:
             return False
-        return check_password_hash(self.password_hash, password)
+
+        # Import here to avoid circular imports at module load time.
+        from src.app.auth.password_utils import verify_password
+
+        return verify_password(password, self.password_hash)
 
     # ==================================================================
     # Login Tracking

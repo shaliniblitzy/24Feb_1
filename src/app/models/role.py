@@ -103,7 +103,7 @@ class RoleAssignment(db.Model):
 
     user_id: str = db.Column(
         db.String(200),
-        db.ForeignKey("users.user_id", ondelete="CASCADE"),
+        db.ForeignKey("users.user_id"),
         primary_key=True,
         nullable=False,
         doc="Foreign key reference to the assigned user.",
@@ -111,7 +111,7 @@ class RoleAssignment(db.Model):
 
     role_id: str = db.Column(
         db.String(200),
-        db.ForeignKey("roles.role_id", ondelete="CASCADE"),
+        db.ForeignKey("roles.role_id"),
         primary_key=True,
         nullable=False,
         doc="Foreign key reference to the assigned role.",
@@ -121,7 +121,7 @@ class RoleAssignment(db.Model):
 
     created_at: datetime = db.Column(
         db.DateTime(),
-        nullable=False,
+        nullable=True,
         default=lambda: datetime.now(timezone.utc),
         server_default=func.now(),
         doc="UTC timestamp of when this role assignment was created.",

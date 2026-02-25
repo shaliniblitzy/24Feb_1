@@ -217,11 +217,16 @@ class AuditLogSubscriber:
                 )
                 return
 
+            # Sanitize the payload before persisting — strip known sensitive
+            # keys (passwords, tokens, API keys, secrets) to prevent
+            # credential leakage into the audit trail (CWE-532).
+            sanitized_payload: dict = self._sanitize_payload(payload)
+
             audit_event = AuditEvent(
                 event_type=event_type_str,
                 user_id=user_id,
                 domain=domain,
-                attributes=payload,
+                attributes=sanitized_payload,
                 ip_address=ip_address,
                 timestamp=datetime.now(timezone.utc),
             )
@@ -249,6 +254,56 @@ class AuditLogSubscriber:
                 str(exc),
                 exc_info=True,
             )
+
+    #: Keys in event payloads that contain sensitive data and must be
+    #: stripped before persisting to the audit trail.  Covers common
+    #: credential fields across authentication, S3, SMTP, and proxy configs.
+    _SENSITIVE_PAYLOAD_KEYS: frozenset[str] = frozenset({
+        "password",
+        "password_hash",
+        "new_password",
+        "old_password",
+        "token",
+        "api_key",
+        "secret",
+        "secret_key",
+        "secretAccessKey",
+        "accessKeyId",
+        "access_token",
+        "refresh_token",
+        "jwt",
+        "authorization",
+        "credentials",
+    })
+
+    #: Replacement value for redacted sensitive fields.
+    _REDACTED: str = "**REDACTED**"
+
+    def _sanitize_payload(self, payload: dict) -> dict:
+        """Remove sensitive keys from an event payload before persistence.
+
+        Performs a shallow copy of the payload dict and replaces values of
+        known sensitive keys with a ``**REDACTED**`` marker.  Nested dicts
+        are recursively sanitized to catch sensitive data at any depth.
+
+        Args:
+            payload: The raw event payload dictionary.
+
+        Returns:
+            A new dictionary with sensitive values redacted.
+        """
+        if not isinstance(payload, dict):
+            return payload
+
+        sanitized: dict = {}
+        for key, value in payload.items():
+            if key.lower() in {k.lower() for k in self._SENSITIVE_PAYLOAD_KEYS}:
+                sanitized[key] = self._REDACTED
+            elif isinstance(value, dict):
+                sanitized[key] = self._sanitize_payload(value)
+            else:
+                sanitized[key] = value
+        return sanitized
 
     def _get_domain(self, event_type: Any) -> str:
         """Map an event type to its logical audit domain.

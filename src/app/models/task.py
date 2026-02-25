@@ -55,13 +55,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import sqlalchemy as sa
 from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
     DateTime,
     ForeignKey,
-    Integer,
     JSON,
     String,
     Text,
@@ -230,6 +230,7 @@ class TaskDefinition(BaseModel, TimestampMixin, JSONAttributesMixin):
         Boolean,
         nullable=False,
         default=True,
+        server_default=sa.text("1"),
         doc="Whether this task schedule is active and should be executed.",
     )
 
@@ -416,10 +417,14 @@ class TaskExecution(BaseModel, TimestampMixin):
     # -- Primary Key ---------------------------------------------------------
 
     execution_id: int = Column(
-        Integer,
+        BigInteger,
         primary_key=True,
         autoincrement=True,
-        doc="Auto-incrementing execution record identifier.",
+        doc=(
+            "Auto-incrementing execution record identifier.  Uses BigInteger "
+            "to support high-volume task execution tracking without overflow "
+            "(Integer max ~2.1B rows is insufficient for long-running systems)."
+        ),
     )
 
     # -- Foreign Key ---------------------------------------------------------
@@ -455,6 +460,7 @@ class TaskExecution(BaseModel, TimestampMixin):
         String(50),
         nullable=False,
         default=EXECUTION_STATUS_WAITING,
+        server_default="waiting",
         doc=(
             "Current execution lifecycle status. Valid values: "
             "'waiting', 'running', 'ok', 'failed', 'canceled'."
