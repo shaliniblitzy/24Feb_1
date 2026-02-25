@@ -77,7 +77,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libpq5 \
-        libldap-2.5-0 \
+        libldap2 \
+        libldap-common \
         libsasl2-2 \
         libffi8 \
         libssl3 \
