@@ -40,10 +40,12 @@ class ProductionConfig(DefaultConfig):
 
     Inherits all defaults from :class:`DefaultConfig` and overrides
     settings that must differ in a production deployment.  The
-    :attr:`SECRET_KEY` is intentionally read via ``os.environ.get``
-    with a sentinel check so that missing configuration is caught
-    immediately at startup rather than silently falling back to an
-    insecure default.
+    :attr:`SECRET_KEY` is intentionally read via ``os.environ[]``
+    (dictionary-style access) so that a missing ``SECRET_KEY``
+    environment variable raises a :class:`KeyError` immediately at
+    import time rather than silently falling back to an insecure
+    default.  This is a deliberate fail-fast design choice: production
+    deployments **must** have a properly generated secret key.
     """
 
     # ==================================================================
@@ -65,15 +67,15 @@ class ProductionConfig(DefaultConfig):
     # ==================================================================
 
     # The SECRET_KEY MUST be explicitly set in the production environment.
-    # Using os.environ.get with a sentinel value that is validated at
-    # import time ensures that a missing key raises a clear error during
-    # application startup rather than silently using an insecure default.
-    SECRET_KEY: str = os.environ.get("SECRET_KEY", "")
+    # Using os.environ['SECRET_KEY'] (dictionary-style access) intentionally
+    # raises a KeyError if the variable is absent.  This fail-fast behaviour
+    # ensures that a missing key is caught at startup rather than silently
+    # falling back to an insecure default.
+    SECRET_KEY: str = os.environ['SECRET_KEY']
 
-    # JWT signing key — defaults to SECRET_KEY when not independently set.
-    JWT_SECRET_KEY: str = os.environ.get(
-        "JWT_SECRET_KEY", os.environ.get("SECRET_KEY", "")
-    )
+    # JWT signing key — defaults to the class-level SECRET_KEY when not
+    # independently set via its own environment variable.
+    JWT_SECRET_KEY: str = os.environ.get('JWT_SECRET_KEY', SECRET_KEY)
 
     # ==================================================================
     # 3. Database — PostgreSQL  (replaces PostgreSQL JDBC 42.7.2)
