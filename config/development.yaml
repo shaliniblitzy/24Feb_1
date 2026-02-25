@@ -1,0 +1,138 @@
+# ============================================
+# Nexus Repository Manager — Development Configuration
+# ============================================
+# Overrides default.yaml for local development environments.
+# Optimized for developer experience with verbose output, minimal
+# external dependencies, and relaxed security constraints.
+#
+# Configuration hierarchy:
+#   default.yaml -> development.yaml -> environment variables (highest priority)
+#
+# Key development overrides:
+#   - Database: SQLite (zero external dependency, separate dev file)
+#   - Debug mode: enabled (Flask debugger + auto-reload)
+#   - SQLAlchemy echo: enabled (SQL queries visible in console)
+#   - Logging: DEBUG level with human-readable text format
+#   - Search: Whoosh (no Elasticsearch required)
+#   - SSL/TLS: disabled (simplifies local setup)
+#   - JWT: extended 72-hour expiration (avoids frequent re-auth)
+#   - BlobStore: file-based (easy local inspection of artifacts)
+# ============================================
+
+# --- Application Settings ---
+# Debug mode enables Flask debugger and auto-reloading for rapid iteration.
+# testing remains false — use testing.yaml for the test runner.
+app:
+  debug: true
+  testing: false
+  secret_key: "dev-secret-key-change-in-production"
+
+# --- Database Configuration ---
+# SQLite database for zero-dependency local development.
+# Uses a separate file (nexus-dev.db) to avoid collisions with default.yaml's nexus.db.
+# echo=true prints all generated SQL to the console for debugging.
+# Pool settings are null because SQLite does not support connection pooling.
+database:
+  url: "sqlite:///nexus-dev.db"
+  echo: true
+  track_modifications: false
+  engine_options:
+    pool_size: null
+    max_overflow: null
+
+# --- BlobStore Configuration ---
+# File-based BlobStore for easy local inspection of stored artifacts.
+# Artifacts are stored in ./data/blobs relative to the project root.
+storage:
+  blobstore_type: "file"
+  blobstore_path: "./data/blobs"
+
+# --- S3 BlobStore (not used in development by default) ---
+# All fields left empty to disable S3 integration.
+# Developers testing S3 features should use moto or LocalStack.
+s3:
+  bucket: ""
+  region: "us-east-1"
+  access_key_id: ""
+  secret_access_key: ""
+  encryption: "SSE-S3"
+  kms_key_arn: ""
+
+# --- JWT Authentication ---
+# Extended expiration (72 hours) avoids frequent re-authentication
+# during development sessions. Secret contains a production-warning marker.
+jwt:
+  secret: "dev-jwt-secret-change-in-production"
+  algorithm: "HS256"
+  expiration_hours: 72
+
+# --- LDAP (disabled by default in development) ---
+# Empty URL disables LDAP authentication.
+# TLS is disabled since there is no LDAP server to connect to locally.
+ldap:
+  url: ""
+  base_dn: ""
+  user_search_filter: "(uid={0})"
+  bind_dn: ""
+  bind_password: ""
+  use_tls: false
+
+# --- SAML/OIDC (disabled by default in development) ---
+# Empty values disable SSO federation.
+# Developers testing SSO can override via environment variables.
+saml:
+  idp_metadata_url: ""
+oidc:
+  client_id: ""
+  client_secret: ""
+  discovery_url: ""
+
+# --- Search Configuration ---
+# Whoosh for development — pure-Python full-text search engine.
+# No Elasticsearch dependency required for local development.
+# Index files are stored in ./data/search relative to the project root.
+search:
+  backend: "whoosh"
+  whoosh_index_path: "./data/search"
+  elasticsearch_url: "http://localhost:9200"
+
+# --- Scheduler ---
+# Enabled to allow testing scheduled task features locally.
+# jobstore_url is empty, which defaults to the database URL (SQLite).
+scheduler:
+  enabled: true
+  jobstore_url: ""
+
+# --- Metrics ---
+# Enabled for local development to allow testing metrics collection.
+metrics:
+  enabled: true
+
+# --- Logging ---
+# DEBUG level provides maximum verbosity for development troubleshooting.
+# Text format produces human-readable output for terminal viewing,
+# unlike the JSON format used in production for SIEM ingestion.
+logging:
+  level: "DEBUG"
+  format: "text"
+
+# --- SSL/TLS (disabled for development) ---
+# Empty paths disable SSL/TLS at the application level.
+# Local development typically uses plain HTTP on localhost.
+ssl:
+  cert_path: ""
+  key_path: ""
+  truststore_path: ""
+
+# --- SIEM Integration (disabled in development) ---
+# Audit events are still captured locally but not forwarded externally.
+siem:
+  endpoint: ""
+  token: ""
+
+# --- Server Settings ---
+# Flask development server configuration.
+# Matches the default Nexus port (8081) for consistency.
+server:
+  host: "127.0.0.1"
+  port: 8081
