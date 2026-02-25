@@ -1,47 +1,85 @@
 # Sonatype Nexus Repository - Python/Flask Backend
 # Runtime Dependencies
+#
+# This file lists all runtime dependencies for the Flask application that replaces
+# the Java/Node.js Sonatype Nexus Repository backend. All versions are pinned
+# exactly (==) for reproducible builds. Organized by functional area.
+#
+# Python 3.12+ required.
 
+# ============================================================================
 # Core Web Framework
+# Replaces: RESTEasy 6.2.7 JAX-RS + embedded Jetty 12.0.5 HTTP server
+# ============================================================================
 Flask==3.1.3
 gunicorn==25.1.0
 Werkzeug==3.1.3
 
+# ============================================================================
 # Database and ORM
+# Replaces: MyBatis 3.5.15 + HikariCP 4.0.3 + Flyway 8.5.13 + H2 2.3.232
+# Dual-database: SQLite (standalone) / PostgreSQL (clustered)
+# ============================================================================
 Flask-SQLAlchemy==3.1.1
 SQLAlchemy==2.0.36
 Flask-Migrate==4.0.7
 alembic==1.14.1
 psycopg2-binary==2.9.10
 
+# ============================================================================
 # API and Serialization
+# Replaces: Jackson 2.16.1 JSON + Swagger/OpenAPI 2.2.20
+# ============================================================================
 marshmallow==3.23.2
 flask-smorest==0.45.0
 
+# ============================================================================
 # Authentication and Security
+# Replaces: Apache Shiro 2.0.0 + BouncyCastle 1.78.1 + Java-JWT 4.4.0
+# Multi-backend: local credentials, API keys, JWT, LDAP/AD, SAML/OIDC
+# ============================================================================
 PyJWT==2.10.1
 Flask-HTTPAuth==4.8.0
 cryptography==44.0.0
 python-ldap==3.4.4
 
+# ============================================================================
 # Search
+# Replaces: Elasticsearch Java client 2.4.3
+# ============================================================================
 elasticsearch==7.17.12
 
+# ============================================================================
 # Cloud Storage
+# Replaces: AWS SDK for Java (S3 BlobStore implementation)
+# ============================================================================
 boto3==1.36.7
 
+# ============================================================================
 # Scheduling and Events
+# Replaces: Quartz 2.3.2 scheduler + Guava EventBus
+# ============================================================================
 APScheduler==3.10.4
 blinker==1.9.0
 
+# ============================================================================
 # Monitoring and Metrics
+# Replaces: Dropwizard Metrics 4.2.25 + Prometheus Client 0.16.0
+# ============================================================================
 prometheus-client==0.21.1
-prometheus-flask-instrumentator==4.1.1
+prometheus-flask-exporter==0.23.2
 
+# ============================================================================
 # HTTP and Networking
+# Replaces: Apache HttpClient 4.5.14 + CORS configuration
+# ============================================================================
 requests==2.32.3
 Flask-CORS==5.0.0
 
+# ============================================================================
 # Configuration and Utilities
+# Environment-based config (twelve-factor app), template engine, CLI
+# ============================================================================
 python-dotenv==1.0.1
 Jinja2==3.1.5
 click==8.1.8
