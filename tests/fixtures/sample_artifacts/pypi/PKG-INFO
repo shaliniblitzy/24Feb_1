@@ -1,0 +1,20 @@
+Metadata-Version: 2.1
+Name: sample-package
+Version: 1.0.0
+Summary: A minimal sample package for testing
+Home-page: https://example.com/sample-package
+Author: Test Author
+Author-email: test@example.com
+License: MIT
+Platform: UNKNOWN
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.12
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+
+# Sample Package
+
+A minimal sample package used for testing the PyPI format handler.
