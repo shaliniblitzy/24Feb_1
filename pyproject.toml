@@ -1,0 +1,186 @@
+# =============================================================================
+# Sonatype Nexus Repository Manager - Python/Flask Backend
+# =============================================================================
+# Modern Python project configuration file (PEP 621).
+# Replaces the Maven pom.xml build system from the Java source.
+# Defines project metadata, runtime/dev dependencies, build system,
+# and tool configurations for pytest, black, and mypy.
+#
+# Python 3.12+ required (per project specification).
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Build System Configuration
+# Uses setuptools as the build backend (replaces Maven build system).
+# -----------------------------------------------------------------------------
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# -----------------------------------------------------------------------------
+# Project Metadata
+# Core project identity matching the Sonatype Nexus Repository product.
+# License: Eclipse Public License 1.0 (same as original Java project).
+# -----------------------------------------------------------------------------
+[project]
+name = "nexus-repository"
+version = "1.0.0"
+description = "Sonatype Nexus Repository Manager - Python/Flask Backend"
+readme = "README.md"
+license = {text = "EPL-1.0"}
+requires-python = ">=3.12"
+authors = [
+    {name = "Nexus Repository Team"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Flask",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Eclipse Public License 1.0 (EPL-1.0)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: System :: Software Distribution",
+]
+
+# -----------------------------------------------------------------------------
+# Runtime Dependencies
+# All packages from the Flask/Python stack replacing the Java dependency tree.
+# Versions are pinned exactly (==) for reproducible builds.
+#
+# Mapping from Java source:
+#   Flask 3.1.3            -> replaces RESTEasy 6.2.7 + Jetty 12.0.5
+#   gunicorn 25.1.0        -> replaces embedded Jetty 12.0.5 HTTP server
+#   SQLAlchemy 2.0.36      -> replaces MyBatis 3.5.15 ORM
+#   marshmallow 3.23.2     -> replaces Jackson 2.16.1 JSON serialization
+#   PyJWT 2.10.1           -> replaces Java-JWT 4.4.0
+#   APScheduler 3.10.4     -> replaces Quartz 2.3.2 scheduler
+#   blinker 1.9.0          -> replaces Guava EventBus
+#   cryptography 44.0.0    -> replaces BouncyCastle 1.78.1
+#   requests 2.32.3        -> replaces Apache HttpClient 4.5.14
+#   elasticsearch 7.17.12  -> replaces Java Elasticsearch client
+#   boto3 1.36.7           -> replaces AWS SDK for Java (S3 BlobStore)
+#   python-ldap 3.4.4      -> replaces Shiro LDAP realm
+# -----------------------------------------------------------------------------
+dependencies = [
+    # Core Web Framework
+    "Flask==3.1.3",
+    "gunicorn==25.1.0",
+    "Werkzeug==3.1.3",
+
+    # Database and ORM (dual-database: SQLite standalone / PostgreSQL clustered)
+    "Flask-SQLAlchemy==3.1.1",
+    "SQLAlchemy==2.0.36",
+    "Flask-Migrate==4.0.7",
+    "alembic==1.14.1",
+    "psycopg2-binary==2.9.10",
+
+    # API and Serialization (OpenAPI 3.x auto-generated documentation)
+    "marshmallow==3.23.2",
+    "flask-smorest==0.45.0",
+
+    # Authentication and Security (multi-backend: local, API key, JWT, LDAP, SSO)
+    "PyJWT==2.10.1",
+    "Flask-HTTPAuth==4.8.0",
+    "cryptography==44.0.0",
+    "python-ldap==3.4.4",
+
+    # Search (Elasticsearch integration for content indexing)
+    "elasticsearch==7.17.12",
+
+    # Cloud Storage (AWS S3 BlobStore backend)
+    "boto3==1.36.7",
+
+    # Scheduling and Events (background tasks + decoupled event dispatch)
+    "APScheduler==3.10.4",
+    "blinker==1.9.0",
+
+    # Monitoring and Metrics (Prometheus-compatible endpoints)
+    "prometheus-client==0.21.1",
+    "prometheus-flask-exporter==0.23.2",
+
+    # HTTP and Networking (proxy repository fetches + CORS)
+    "requests==2.32.3",
+    "Flask-CORS==5.0.0",
+
+    # Configuration (twelve-factor app environment variable loading)
+    "python-dotenv==1.0.1",
+]
+
+# -----------------------------------------------------------------------------
+# Optional Dependencies (Development and Testing)
+# Replaces Java testing stack: JUnit 5.10.1, Spock, Mockito 5.8.0
+# Install with: pip install nexus-repository[dev]
+# -----------------------------------------------------------------------------
+[project.optional-dependencies]
+dev = [
+    # Testing Framework
+    "pytest==8.3.4",
+    "pytest-cov==6.0.0",
+    "pytest-flask==1.3.0",
+    "pytest-mock==3.14.0",
+
+    # Test Data Generation
+    "factory-boy==3.3.1",
+    "Faker==33.1.0",
+
+    # Code Quality Tools
+    "black==24.10.0",
+    "flake8==7.1.1",
+    "mypy==1.14.1",
+
+    # AWS Service Mocking (for S3 BlobStore tests)
+    "moto==5.0.27",
+]
+
+# -----------------------------------------------------------------------------
+# Package Discovery Configuration
+# All application source code lives under src/ following the src-layout pattern.
+# This ensures clean separation between source and project root files.
+# -----------------------------------------------------------------------------
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# -----------------------------------------------------------------------------
+# pytest Configuration
+# Test runner settings for the project test suite.
+# Replaces JUnit 5.10.1 and Spock testing framework from the Java source.
+# -----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+# -----------------------------------------------------------------------------
+# Black Code Formatter Configuration
+# Consistent code formatting across the entire Python codebase.
+# Line length 88 is black's default and widely adopted standard.
+# -----------------------------------------------------------------------------
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+# -----------------------------------------------------------------------------
+# mypy Static Type Checker Configuration
+# Type checking for Python 3.12 with pragmatic settings.
+# ignore_missing_imports handles third-party packages without type stubs.
+# -----------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+# -----------------------------------------------------------------------------
+# Note: flake8 does not natively support pyproject.toml configuration.
+# Flake8 settings should be placed in a separate .flake8 or setup.cfg file.
+# Recommended .flake8 configuration:
+#   [flake8]
+#   max-line-length = 88
+#   exclude = .git,__pycache__,migrations,venv
+#   extend-ignore = E203,W503
+# -----------------------------------------------------------------------------
