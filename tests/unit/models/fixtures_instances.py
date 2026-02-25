@@ -295,7 +295,7 @@ def sample_task(db_session):
         type="repository.cleanup",
         schedule="0 2 * * *",
         enabled=True,
-        status="idle",
+        status="WAITING",
         created_at=now,
         updated_at=now,
     )
