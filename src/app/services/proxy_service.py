@@ -56,12 +56,15 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import ipaddress
 import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, BinaryIO, Generator
-from xml.etree import ElementTree
+from urllib.parse import urlparse
+
+import defusedxml.ElementTree as ElementTree  # Secure XML parsing — prevents XXE (CWE-611)
 
 from flask import current_app
 
@@ -146,6 +149,73 @@ class ProxyService:
         self._clients: dict[str, HttpClient] = {}
         self._negative_cache: dict[str, datetime] = {}
         self.logger.debug("ProxyService initialised.")
+
+    # ===================================================================
+    # SSRF URL Validation (CWE-918)
+    # ===================================================================
+
+    @staticmethod
+    def _validate_upstream_url(url: str) -> tuple[bool, str]:
+        """Validate an upstream repository URL to mitigate SSRF attacks.
+
+        Checks that the URL does not target private, reserved, or link-local
+        IP address ranges (RFC 1918, RFC 6598, loopback, link-local) or
+        well-known cloud metadata endpoints.  While upstream URLs are
+        configured by administrators, this defense-in-depth measure protects
+        against compromised admin accounts exfiltrating infrastructure data.
+
+        Args:
+            url: The upstream repository URL to validate.
+
+        Returns:
+            A ``(is_safe, reason)`` tuple.  ``is_safe`` is ``True`` if the URL
+            is acceptable; ``False`` with a human-readable ``reason`` otherwise.
+        """
+        if not url or not url.strip():
+            return (False, "URL is empty")
+
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return (False, "URL is malformed")
+
+        # Only allow HTTP and HTTPS schemes
+        if parsed.scheme not in ("http", "https"):
+            return (False, f"Unsupported URL scheme: {parsed.scheme}")
+
+        hostname: str = parsed.hostname or ""
+        if not hostname:
+            return (False, "URL has no hostname")
+
+        # Block well-known cloud metadata endpoints regardless of resolution
+        _BLOCKED_HOSTNAMES: set[str] = {
+            "metadata.google.internal",
+            "metadata.goog",
+        }
+        if hostname.lower() in _BLOCKED_HOSTNAMES:
+            return (False, f"Blocked cloud metadata hostname: {hostname}")
+
+        # Attempt to parse as an IP address and check for private/reserved
+        try:
+            addr = ipaddress.ip_address(hostname)
+            if addr.is_private:
+                return (False, f"Private IP address not allowed: {hostname}")
+            if addr.is_reserved:
+                return (False, f"Reserved IP address not allowed: {hostname}")
+            if addr.is_loopback:
+                return (False, f"Loopback address not allowed: {hostname}")
+            if addr.is_link_local:
+                return (False, f"Link-local address not allowed: {hostname}")
+            # Block AWS/Azure/GCP metadata IP (169.254.169.254)
+            if str(addr) == "169.254.169.254":
+                return (False, "Cloud metadata endpoint not allowed")
+        except ValueError:
+            # Hostname is not an IP literal — that's fine, it's a DNS name.
+            # DNS rebinding is out of scope for this validation layer;
+            # network-level controls should be used for full SSRF protection.
+            pass
+
+        return (True, "")
 
     # ===================================================================
     # Repository Lookup Helper
@@ -629,6 +699,18 @@ class ProxyService:
         )
 
         remote_url: str = proxy_config.get("remoteUrl", "")
+
+        # SSRF validation (CWE-918): warn on internal/private URLs
+        url_safe, url_reason = self._validate_upstream_url(remote_url)
+        if not url_safe:
+            self.logger.warning(
+                "Upstream URL for repository '%s' failed SSRF validation: %s "
+                "(URL: %s). Proceeding with admin-configured URL, but this "
+                "may pose a security risk.",
+                repo_name,
+                url_reason,
+                remote_url,
+            )
 
         # Determine authentication method
         auth_tuple: tuple[str, str] | None = None

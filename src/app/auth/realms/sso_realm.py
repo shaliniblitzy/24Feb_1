@@ -22,7 +22,7 @@ any SAML 2.0 or OIDC-compliant IdP.
 +-------------------+-----------------------------------------------------+
 | Protocol          | Implementation Details                              |
 +===================+=====================================================+
-| SAML 2.0          | Parses SAML assertions via ``xml.etree.ElementTree``|
+| SAML 2.0          | Parses SAML assertions via ``defusedxml.ElementTree``|
 |                   | Validates signatures with ``cryptography`` library  |
 |                   | Extracts NameID, attributes, and group memberships  |
 +-------------------+-----------------------------------------------------+
@@ -75,7 +75,7 @@ from __future__ import annotations
 import base64
 import logging
 import time
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET  # Secure XML parsing — prevents XXE (CWE-611)
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple

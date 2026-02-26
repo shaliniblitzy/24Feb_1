@@ -370,8 +370,31 @@ class LDAPRealm(RealmBase):
             ldap.OPT_NETWORK_TIMEOUT, config.get("timeout", 10)
         )
 
+        # TLS certificate verification (CWE-295): enforce cert validation
+        # for both StartTLS and LDAPS connections to prevent MITM attacks
+        # on LDAP credential transmission.
+        use_ssl: bool = config.get("use_ssl", False)
+        use_starttls: bool = config.get("use_starttls", False)
+
+        if use_ssl or use_starttls:
+            # Demand full certificate verification by default
+            conn.set_option(
+                ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_DEMAND
+            )
+
+            # Allow configurable CA certificate path for custom CAs
+            ca_cert_file: str = config.get("ca_cert_file", "")
+            if ca_cert_file:
+                conn.set_option(ldap.OPT_X_TLS_CACERTFILE, ca_cert_file)
+                self.logger.debug(
+                    "LDAP TLS: using custom CA certificate: %s", ca_cert_file
+                )
+
+            # Apply TLS options by creating a new TLS context
+            conn.set_option(ldap.OPT_X_TLS_NEWCTX, 0)
+
         # StartTLS upgrade (if configured and not already using ldaps://)
-        if config.get("use_starttls", False):
+        if use_starttls:
             conn.start_tls_s()
             self.logger.debug("StartTLS negotiation completed successfully.")
 
@@ -997,6 +1020,9 @@ class LDAPRealm(RealmBase):
             "timeout": current_app.config.get("LDAP_TIMEOUT", 10),
             "group_role_mapping": current_app.config.get(
                 "LDAP_GROUP_ROLE_MAPPING", {}
+            ),
+            "ca_cert_file": current_app.config.get(
+                "LDAP_TLS_CACERT_FILE", ""
             ),
         }
 

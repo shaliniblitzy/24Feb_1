@@ -28,8 +28,8 @@ import logging
 import os
 import re
 from typing import TYPE_CHECKING
-from xml.etree import ElementTree
-from xml.etree.ElementTree import ParseError as XMLParseError
+import defusedxml.ElementTree as ElementTree  # Secure XML parsing — prevents XXE (CWE-611)
+from defusedxml.ElementTree import ParseError as XMLParseError
 
 from flask import Blueprint, Response, abort, jsonify, request, send_file
 

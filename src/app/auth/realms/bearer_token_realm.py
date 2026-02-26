@@ -70,6 +70,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -131,15 +132,37 @@ class BearerTokenRealm(RealmBase):
         """Initialise the Bearer Token realm.
 
         Calls the parent ``RealmBase.__init__`` which sets up a
-        per-class structured logger, then initialises a private
-        attribute used to track the matched API key entry across
-        the authenticate → validate → update pipeline.
+        per-class structured logger, then initialises a thread-local
+        storage object used to track the matched API key entry across
+        the authenticate → validate → update pipeline within a single
+        request context.
+
+        Thread Safety:
+            Per-request state is stored in a ``threading.local()`` object
+            rather than a plain instance attribute.  This ensures that
+            concurrent requests in multi-threaded Gunicorn workers
+            (``gthread``) do not overwrite each other's matched key entry
+            (CWE-362 mitigation).
         """
         super().__init__()
-        # Tracks the matched API key entry dict during the current
-        # authenticate() call so that _is_api_key_expired() and
-        # _update_api_key_last_used() can reference the specific key.
-        self._matched_key_entry: Optional[Dict[str, Any]] = None
+        # Thread-local storage for per-request matched key tracking.
+        # Each thread gets its own independent _matched_key_entry value,
+        # preventing race conditions in multi-threaded workers.
+        self._local: threading.local = threading.local()
+
+    # ------------------------------------------------------------------
+    # Thread-Local State Property
+    # ------------------------------------------------------------------
+
+    @property
+    def _matched_key_entry(self) -> Optional[Dict[str, Any]]:
+        """Get the matched API key entry for the current thread."""
+        return getattr(self._local, "matched_key_entry", None)
+
+    @_matched_key_entry.setter
+    def _matched_key_entry(self, value: Optional[Dict[str, Any]]) -> None:
+        """Set the matched API key entry for the current thread."""
+        self._local.matched_key_entry = value
 
     # ------------------------------------------------------------------
     # RealmBase Abstract Interface Implementation
@@ -412,14 +435,23 @@ class BearerTokenRealm(RealmBase):
     def _find_user_by_api_key(self, api_key: str) -> Optional[User]:
         """Search for a user whose stored API key hash matches *api_key*.
 
-        Hashes the incoming key with SHA-256 and iterates through every
-        user that has API keys stored in their ``attributes`` JSON
-        column, comparing hashes with ``hmac.compare_digest`` for
-        timing-safety.
+        Hashes the incoming key with SHA-256 and performs a two-phase lookup:
 
-        On a match, sets ``self._matched_key_entry`` so that downstream
-        methods (:meth:`_is_api_key_expired`, :meth:`_update_api_key_last_used`)
-        can reference the specific key entry.
+        **Phase 1 — Indexed O(1) lookup:**
+            Queries the ``User.api_key`` indexed column for an exact hash
+            match.  This column has a unique B-tree index (``ix_users_api_key``)
+            providing constant-time resolution for users whose primary API key
+            hash is stored in the dedicated column.
+
+        **Phase 2 — JSON attributes fallback:**
+            If Phase 1 produces no match, falls back to scanning the
+            ``attributes['api_keys']`` JSON list for users with multiple API
+            keys.  This path is only taken when the key is not stored in the
+            indexed column (e.g., secondary keys or pre-migration data).
+
+        On a match, sets ``self._matched_key_entry`` (thread-local) so that
+        downstream methods (:meth:`_is_api_key_expired`,
+        :meth:`_update_api_key_last_used`) can reference the specific key entry.
 
         Args:
             api_key: The plaintext API key token to look up.
@@ -430,9 +462,31 @@ class BearerTokenRealm(RealmBase):
         incoming_hash: str = self._hash_api_key(api_key)
 
         try:
-            # Query all users that potentially have API keys.
-            # We filter for non-null attributes at the application level
-            # for maximum portability across SQLite and PostgreSQL.
+            # Phase 1: O(1) indexed lookup via the dedicated api_key column.
+            # The unique index ix_users_api_key provides constant-time lookups,
+            # avoiding the O(N*M) full-table scan for the common case.
+            user: Optional[User] = User.query.filter(
+                User.api_key == incoming_hash
+            ).first()
+
+            if user is not None:
+                # Construct a synthetic key entry for downstream methods.
+                # The primary API key in the indexed column does not have
+                # expiration — it is always valid while the account is active.
+                self._matched_key_entry = {
+                    "key_hash": incoming_hash,
+                    "created_at": None,
+                    "last_used": None,
+                    "expires_at": None,
+                    "description": "primary",
+                }
+                return user
+
+            # Phase 2: Fallback — scan JSON attributes for secondary keys.
+            # This handles users with multiple API keys stored in the
+            # attributes['api_keys'] list.  We filter for non-null
+            # attributes at the application level for portability across
+            # SQLite and PostgreSQL.
             users: List[User] = User.query.filter(
                 User.attributes.isnot(None)
             ).all()
@@ -442,16 +496,16 @@ class BearerTokenRealm(RealmBase):
             )
             return None
 
-        for user in users:
+        for candidate in users:
             user_api_keys: List[Dict[str, Any]] = (
-                (user.attributes or {}).get("api_keys", [])
+                (candidate.attributes or {}).get("api_keys", [])
             )
             for key_entry in user_api_keys:
                 stored_hash: str = key_entry.get("key_hash", "")
                 # CRITICAL: timing-safe comparison to prevent side-channel attacks.
                 if hmac.compare_digest(stored_hash, incoming_hash):
                     self._matched_key_entry = key_entry
-                    return user
+                    return candidate
 
         return None
 
