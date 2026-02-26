@@ -450,6 +450,15 @@ def create_blobstore(validated: Dict[str, Any]) -> tuple:
             configuration=configuration,
         )
     except BlobStoreConfigError as exc:
+        # Distinguish "already exists" from other config errors — map
+        # duplicate name to 409 Conflict per REST API conventions.
+        if "already exists" in exc.message.lower():
+            logger.warning(
+                "BlobStore creation conflict: name='%s'. %s",
+                name,
+                exc.message,
+            )
+            abort(409, message=exc.message)
         logger.warning(
             "BlobStore creation failed (config error): name='%s'. %s",
             name,
@@ -827,6 +836,198 @@ def get_blobstore_metrics(blob_store_name: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# BlobStore Maintenance REST Endpoints (Feature F-203)
+# ---------------------------------------------------------------------------
+# These endpoints expose maintenance operations as on-demand REST actions.
+# The same operations are also available via the scheduled-task system
+# (task types: blobstore.compact, blobstore.purge-unused) for automated,
+# recurring execution.
+# ---------------------------------------------------------------------------
+
+
+@blobstores_bp.route("/<string:blob_store_name>/compact", methods=["POST"])
+@login_required
+def compact_blobstore(blob_store_name: str) -> tuple:
+    """Trigger immediate compaction for a specific BlobStore.
+
+    Compaction permanently removes soft-deleted blobs that have exceeded
+    the retention period.  Returns 202 Accepted with a summary of the
+    compaction result.
+
+    Args:
+        blob_store_name: Name of the target BlobStore.
+
+    Returns:
+        Tuple of (JSON response body, 202) on success.
+
+    Raises:
+        404: BlobStore with the given name does not exist.
+    """
+    # Verify the BlobStore exists in the database
+    config: Optional[BlobStoreConfig] = BlobStoreConfig.query.filter_by(
+        blob_store_name=blob_store_name
+    ).first()
+    if config is None:
+        abort(
+            404,
+            message=f"BlobStore '{blob_store_name}' not found.",
+        )
+
+    # Instantiate maintenance service and run compaction
+    from src.app.storage.maintenance import BlobStoreMaintenanceService
+
+    maintenance_svc: BlobStoreMaintenanceService = BlobStoreMaintenanceService()
+
+    # Resolve a concrete BlobStore instance from the service layer so that
+    # the maintenance service can operate on actual blob data.
+    try:
+        bs_service: BlobStoreService = BlobStoreService()
+        blobstore_instance = bs_service.get_active_store(blob_store_name)
+        maintenance_svc.register_blobstore(blob_store_name, blobstore_instance)
+    except Exception:
+        logger.debug(
+            "Could not resolve live BlobStore instance for '%s' — "
+            "maintenance service will operate in standalone mode.",
+            blob_store_name,
+        )
+
+    compact_result: Dict[str, Any] = maintenance_svc.compact(blob_store_name)
+
+    logger.info(
+        "On-demand compaction triggered for BlobStore '%s': status=%s",
+        blob_store_name,
+        compact_result.get("status", "unknown"),
+    )
+
+    return jsonify({
+        "blob_store_name": blob_store_name,
+        "operation": "compact",
+        "result": compact_result,
+    }), 202
+
+
+@blobstores_bp.route(
+    "/<string:blob_store_name>/verify-integrity", methods=["POST"]
+)
+@login_required
+def verify_blobstore_integrity(blob_store_name: str) -> tuple:
+    """Trigger immediate integrity verification for a specific BlobStore.
+
+    Performs read-only checksum validation across all blobs in the store.
+    Returns 202 Accepted with a summary of the verification result.
+
+    Args:
+        blob_store_name: Name of the target BlobStore.
+
+    Returns:
+        Tuple of (JSON response body, 202) on success.
+
+    Raises:
+        404: BlobStore with the given name does not exist.
+    """
+    config: Optional[BlobStoreConfig] = BlobStoreConfig.query.filter_by(
+        blob_store_name=blob_store_name
+    ).first()
+    if config is None:
+        abort(
+            404,
+            message=f"BlobStore '{blob_store_name}' not found.",
+        )
+
+    from src.app.storage.maintenance import BlobStoreMaintenanceService
+
+    maintenance_svc: BlobStoreMaintenanceService = BlobStoreMaintenanceService()
+
+    try:
+        bs_service: BlobStoreService = BlobStoreService()
+        blobstore_instance = bs_service.get_active_store(blob_store_name)
+        maintenance_svc.register_blobstore(blob_store_name, blobstore_instance)
+    except Exception:
+        logger.debug(
+            "Could not resolve live BlobStore instance for '%s' — "
+            "verification will operate in standalone mode.",
+            blob_store_name,
+        )
+
+    verify_result: Dict[str, Any] = maintenance_svc.verify_integrity(
+        blob_store_name,
+    )
+
+    logger.info(
+        "On-demand integrity verification triggered for BlobStore '%s': "
+        "status=%s",
+        blob_store_name,
+        verify_result.get("status", "unknown"),
+    )
+
+    return jsonify({
+        "blob_store_name": blob_store_name,
+        "operation": "verify-integrity",
+        "result": verify_result,
+    }), 202
+
+
+@blobstores_bp.route(
+    "/<string:blob_store_name>/cleanup-temp", methods=["POST"]
+)
+@login_required
+def cleanup_temp_files(blob_store_name: str) -> tuple:
+    """Trigger immediate temporary file cleanup for a specific BlobStore.
+
+    Removes orphaned staging / temporary files left behind by interrupted
+    write operations.  Returns 202 Accepted with a summary of the result.
+
+    Args:
+        blob_store_name: Name of the target BlobStore.
+
+    Returns:
+        Tuple of (JSON response body, 202) on success.
+
+    Raises:
+        404: BlobStore with the given name does not exist.
+    """
+    config: Optional[BlobStoreConfig] = BlobStoreConfig.query.filter_by(
+        blob_store_name=blob_store_name
+    ).first()
+    if config is None:
+        abort(
+            404,
+            message=f"BlobStore '{blob_store_name}' not found.",
+        )
+
+    from src.app.storage.maintenance import BlobStoreMaintenanceService
+
+    maintenance_svc: BlobStoreMaintenanceService = BlobStoreMaintenanceService()
+
+    try:
+        bs_service: BlobStoreService = BlobStoreService()
+        blobstore_instance = bs_service.get_active_store(blob_store_name)
+        maintenance_svc.register_blobstore(blob_store_name, blobstore_instance)
+    except Exception:
+        logger.debug(
+            "Could not resolve live BlobStore instance for '%s' — "
+            "temp cleanup will operate in standalone mode.",
+            blob_store_name,
+        )
+
+    cleanup_result: Dict[str, Any] = maintenance_svc.cleanup_temp_files(
+        blob_store_name,
+    )
+
+    logger.info(
+        "On-demand temp file cleanup triggered for BlobStore '%s': status=%s",
+        blob_store_name,
+        cleanup_result.get("status", "unknown"),
+    )
+
+    return jsonify({
+        "blob_store_name": blob_store_name,
+        "operation": "cleanup-temp",
+        "result": cleanup_result,
+    }), 202
+
+
+# ---------------------------------------------------------------------------
 # Blueprint Error Handlers
 # ---------------------------------------------------------------------------
 # Register blueprint-scoped error handlers for consistent JSON error
@@ -834,33 +1035,63 @@ def get_blobstore_metrics(blob_store_name: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 
+def _extract_error_message(error: Any, default: str) -> str:
+    """Extract a human-readable message from an HTTP exception.
+
+    flask-smorest's ``abort()`` stores the message in ``error.data['message']``
+    while Werkzeug stores it in ``error.description``.  This helper tries
+    both locations (preferring the flask-smorest location) so that custom
+    messages passed to ``abort(code, message=...)`` are always surfaced.
+
+    Args:
+        error: The HTTP exception instance.
+        default: Fallback message if neither location contains a string.
+
+    Returns:
+        The extracted or default error message string.
+    """
+    # flask-smorest stores custom messages in error.data['message']
+    if hasattr(error, "data") and isinstance(error.data, dict):
+        msg = error.data.get("message")
+        if msg and isinstance(msg, str):
+            return msg
+
+    # Werkzeug stores message in error.description (may be the default
+    # Werkzeug text, so we only use it if there is no flask-smorest data)
+    desc = getattr(error, "description", None)
+    if desc and isinstance(desc, str):
+        return desc
+
+    return default
+
+
 @blobstores_bp.errorhandler(400)
 def handle_bad_request(error: Any) -> tuple:
     """Handle HTTP 400 Bad Request errors."""
-    message: str = getattr(error, "description", "Bad request")
-    return jsonify({"message": message, "status": 400}), 400
+    message: str = _extract_error_message(error, "Bad request")
+    return jsonify({"error": {"code": 400, "message": message}}), 400
 
 
 @blobstores_bp.errorhandler(404)
 def handle_not_found(error: Any) -> tuple:
     """Handle HTTP 404 Not Found errors."""
-    message: str = getattr(error, "description", "Resource not found")
-    return jsonify({"message": message, "status": 404}), 404
+    message: str = _extract_error_message(error, "Resource not found")
+    return jsonify({"error": {"code": 404, "message": message}}), 404
 
 
 @blobstores_bp.errorhandler(409)
 def handle_conflict(error: Any) -> tuple:
     """Handle HTTP 409 Conflict errors."""
-    message: str = getattr(error, "description", "Resource conflict")
-    return jsonify({"message": message, "status": 409}), 409
+    message: str = _extract_error_message(error, "Resource conflict")
+    return jsonify({"error": {"code": 409, "message": message}}), 409
 
 
 @blobstores_bp.errorhandler(500)
 def handle_internal_error(error: Any) -> tuple:
     """Handle HTTP 500 Internal Server Error."""
-    message: str = getattr(error, "description", "Internal server error")
+    message: str = _extract_error_message(error, "Internal server error")
     logger.error("Internal server error in blobstores API: %s", message)
-    return jsonify({"message": message, "status": 500}), 500
+    return jsonify({"error": {"code": 500, "message": message}}), 500
 
 
 # ---------------------------------------------------------------------------

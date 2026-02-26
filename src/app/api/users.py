@@ -400,29 +400,46 @@ def after_request(response: Any) -> Any:
 # ===========================================================================
 
 
+def _extract_blueprint_error_message(error: Any, default: str) -> str:
+    """Extract a human-readable error message from an HTTPException.
+
+    flask-smorest's ``abort()`` stores extra data in ``error.data`` (a dict
+    with a ``'message'`` key).  Standard Flask ``abort()`` stores the message
+    in ``error.description``.  This helper handles both cases so that custom
+    messages are always surfaced in JSON error responses.
+    """
+    data = getattr(error, "data", None)
+    if isinstance(data, dict) and "message" in data:
+        return str(data["message"])
+    desc = getattr(error, "description", None)
+    if desc:
+        return str(desc)
+    return default
+
+
 @users_bp.errorhandler(404)
 def handle_not_found(error: Any) -> tuple:
     """Handle 404 Not Found errors within the users blueprint.
 
-    Produces a JSON response consistent with flask-smorest's error
-    format.
+    Produces a JSON response consistent with the application-wide error
+    format: ``{"error": {"code": N, "message": "..."}}``.
     """
-    message: str = getattr(error, "description", str(error))
-    return {"code": 404, "status": "Not Found", "message": message}, 404
+    message: str = _extract_blueprint_error_message(error, "Resource not found")
+    return jsonify({"error": {"code": 404, "message": message}}), 404
 
 
 @users_bp.errorhandler(409)
 def handle_conflict(error: Any) -> tuple:
     """Handle 409 Conflict errors (duplicate user, last admin deletion)."""
-    message = getattr(error, "description", str(error))
-    return {"code": 409, "status": "Conflict", "message": message}, 409
+    message = _extract_blueprint_error_message(error, "Conflict")
+    return jsonify({"error": {"code": 409, "message": message}}), 409
 
 
 @users_bp.errorhandler(400)
 def handle_bad_request(error: Any) -> tuple:
     """Handle 400 Bad Request errors (validation failures, bad passwords)."""
-    message = getattr(error, "description", str(error))
-    return {"code": 400, "status": "Bad Request", "message": message}, 400
+    message = _extract_blueprint_error_message(error, "Bad request")
+    return jsonify({"error": {"code": 400, "message": message}}), 400
 
 
 # ===========================================================================

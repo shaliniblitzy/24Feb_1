@@ -131,9 +131,8 @@ MAX_PAGE_SIZE: int = 200
 
 @components_bp.route("/", methods=["GET"])
 @components_bp.arguments(ComponentListQuerySchema, location="query")
-@components_bp.response(200, ComponentSearchResultSchema)
 @login_required
-def list_components(args: dict) -> dict:
+def list_components(args: dict) -> tuple:
     """List and filter components across repositories.
 
     Supports pagination and optional filtering by repository, namespace,
@@ -244,16 +243,21 @@ def list_components(args: dict) -> dict:
             "page_size": page_size,
         }
 
-    # Build the serialisable response structure
+    # Build the serialisable response structure — we bypass the
+    # flask-smorest @response decorator to return a correctly shaped
+    # paginated envelope.  The ComponentSearchResultSchema is designed
+    # for individual search results, not paginated wrappers.
+    from flask import jsonify as _jsonify
+
     component_schema = ComponentSchema(many=True)
     serialized_items = component_schema.dump(result["items"])
 
-    return {
+    return _jsonify({
         "items": serialized_items,
         "total_count": result["total_count"],
         "page": result["page"],
         "page_size": result["page_size"],
-    }
+    }), 200
 
 
 # ===========================================================================
@@ -262,9 +266,8 @@ def list_components(args: dict) -> dict:
 
 
 @components_bp.route("/<int:component_id>", methods=["GET"])
-@components_bp.response(200, ComponentDetailSchema)
 @login_required
-def get_component(component_id: int) -> dict:
+def get_component(component_id: int) -> tuple:
     """Retrieve detailed information for a specific component.
 
     Includes the component's coordinate fields, attributes, timestamps,
@@ -302,7 +305,11 @@ def get_component(component_id: int) -> dict:
     )
     format_name: str = repository.format if repository else "unknown"
 
-    # Build detail response
+    # Build detail response — we manually serialize to avoid flask-smorest
+    # re-serialization that would strip dynamically-added fields like
+    # ``assets``, ``asset_count``, and ``format``.
+    from flask import jsonify as _jsonify
+
     detail_schema = ComponentDetailSchema()
     component_data = detail_schema.dump(component)
     asset_data = []
@@ -334,7 +341,7 @@ def get_component(component_id: int) -> dict:
     component_data["asset_count"] = len(assets)
     component_data["format"] = format_name
 
-    return component_data
+    return _jsonify(component_data), 200
 
 
 # ===========================================================================
@@ -708,11 +715,12 @@ def handle_request_entity_too_large(error):
         "upload_component: request entity too large: %s",
         str(error),
     )
-    return {
-        "code": 413,
-        "message": "Uploaded file exceeds the maximum allowed size.",
-        "status": "Request Entity Too Large",
-    }, 413
+    return jsonify({
+        "error": {
+            "code": 413,
+            "message": "Uploaded file exceeds the maximum allowed size.",
+        }
+    }), 413
 
 
 @components_bp.errorhandler(415)
@@ -726,11 +734,12 @@ def handle_unsupported_media_type(error):
         "upload_component: unsupported media type: %s",
         str(error),
     )
-    return {
-        "code": 415,
-        "message": "Unsupported media type for component upload.",
-        "status": "Unsupported Media Type",
-    }, 415
+    return jsonify({
+        "error": {
+            "code": 415,
+            "message": "Unsupported media type for component upload.",
+        }
+    }), 415
 
 
 # ---------------------------------------------------------------------------

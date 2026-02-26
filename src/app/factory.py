@@ -427,9 +427,22 @@ def _register_error_handlers(app: Flask) -> None:
         """Create an error handler closure for the given status code."""
 
         def handler(error: Any):
-            # Extract message from the exception if available
+            # Extract the custom error message from the exception.
+            # flask-smorest's abort(code, message=...) stores the custom
+            # message in error.data['message'], while Werkzeug's native
+            # abort() stores it in error.description.  We check both
+            # locations (preferring the flask-smorest location) so that
+            # custom messages are always surfaced in JSON error responses.
             message: str = default_message
-            if hasattr(error, "description") and error.description:
+
+            # Priority 1: flask-smorest data dict
+            if hasattr(error, "data") and isinstance(error.data, dict):
+                smorest_msg = error.data.get("message")
+                if smorest_msg and isinstance(smorest_msg, str):
+                    message = smorest_msg
+            # Priority 2: Werkzeug description (only used when it differs
+            # from the generic HTTP status text that Werkzeug sets by default)
+            elif hasattr(error, "description") and error.description:
                 message = str(error.description)
 
             # Log 5xx errors at ERROR level; 4xx at DEBUG
@@ -459,6 +472,36 @@ def _register_error_handlers(app: Flask) -> None:
 
     for code, msg in error_messages.items():
         app.errorhandler(code)(_make_error_handler(code, msg))
+
+    # Override flask-smorest's HTTPException catch-all to enforce the
+    # consistent ``{"error": {"code": N, "message": "..."}}`` format for
+    # any HTTP status codes not explicitly listed in *error_messages* above.
+    from werkzeug.exceptions import HTTPException as _HTTPException
+
+    @app.errorhandler(_HTTPException)
+    def handle_generic_http_exception(error: _HTTPException):
+        """Catch-all for HTTP exceptions not covered by code-specific handlers.
+
+        Overrides flask-smorest's default ``handle_http_exception`` to ensure
+        every JSON error response uses the application-wide nested format.
+        """
+        status_code: int = error.code or 500
+        message: str = error.name or "Unknown Error"
+        # flask-smorest stores custom message in error.data
+        data = getattr(error, "data", None)
+        if isinstance(data, dict) and "message" in data:
+            message = str(data["message"])
+        elif error.description:
+            message = str(error.description)
+
+        payload: dict = {"error": {"code": status_code, "message": message}}
+        # Carry through validation errors if present
+        if isinstance(data, dict) and "errors" in data:
+            payload["error"]["errors"] = data["errors"]
+
+        response = jsonify(payload)
+        response.status_code = status_code
+        return response
 
     # Catch-all for unhandled exceptions
     @app.errorhandler(Exception)

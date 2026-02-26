@@ -852,10 +852,11 @@ def handle_script_validation_error(error: ScriptValidationError) -> Any:
     """
     logger.warning("Script validation error: %s", error.message)
     return jsonify({
-        "code": 400,
-        "status": "Bad Request",
-        "message": error.message,
-        "details": error.details,
+        "error": {
+            "code": 400,
+            "message": error.message,
+            "details": error.details,
+        }
     }), 400
 
 
@@ -874,10 +875,11 @@ def handle_script_execution_error(error: ScriptExecutionError) -> Any:
     """
     logger.error("Script execution error: %s", error.message)
     return jsonify({
-        "code": 500,
-        "status": "Internal Server Error",
-        "message": error.message,
-        "details": error.details,
+        "error": {
+            "code": 500,
+            "message": error.message,
+            "details": error.details,
+        }
     }), 500
 
 
@@ -896,10 +898,11 @@ def handle_script_timeout_error(error: ScriptTimeoutError) -> Any:
     """
     logger.warning("Script timeout error: %s", error.message)
     return jsonify({
-        "code": 408,
-        "status": "Request Timeout",
-        "message": error.message,
-        "details": error.details,
+        "error": {
+            "code": 408,
+            "message": error.message,
+            "details": error.details,
+        }
     }), 408
 
 

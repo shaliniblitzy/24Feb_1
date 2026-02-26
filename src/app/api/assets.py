@@ -274,11 +274,15 @@ def _resolve_blob_content(
 
     Locates and opens the binary file referenced by ``asset.blob_ref``.
     For File BlobStore (F-201) the reference resolves to a local
-    filesystem path; for S3 BlobStore (F-202) it would resolve to an S3
-    object key (delegated to the appropriate storage backend).
+    filesystem path using the content-addressable storage layout:
+    ``<blobstore_root>/content/<s1>/<s2>/<s3>/<uuid>.bytes``
 
-    The function checks both absolute paths and paths relative to the
-    configured ``BLOBSTORE_ROOT`` directory.
+    The ``blob_ref`` format is ``{store_name}:{uuid}`` (e.g.,
+    ``default:13c0e718-d4eb-44a0-ba95-a8e9b062a09e``).  The function
+    parses this reference, looks up the BlobStore configuration to
+    determine the root path, and constructs the nested content path
+    using the same ID-prefix-based directory nesting as
+    :class:`~src.app.storage.file_blobstore.FileBlobStore`.
 
     Args:
         asset: The :class:`Asset` instance whose content to resolve.
@@ -311,7 +315,19 @@ def _resolve_blob_content(
 
     blob_ref: str = asset.blob_ref
 
-    # Attempt 1: blob_ref is an absolute path
+    # ---- Strategy 1: Parse structured blob_ref (store_name:uuid) ----
+    # This is the primary resolution path for blobs stored via the
+    # FileBlobStore, which uses the format "store_name:uuid".
+    if ":" in blob_ref:
+        store_name, _, blob_uuid = blob_ref.partition(":")
+        if store_name and blob_uuid:
+            resolved = _resolve_via_blobstore(
+                asset, store_name, blob_uuid, content_type, filename
+            )
+            if resolved is not None:
+                return resolved
+
+    # ---- Strategy 2: blob_ref is an absolute path ----
     if os.path.isabs(blob_ref) and os.path.isfile(blob_ref):
         logger.debug(
             "Resolved asset %d blob via absolute path: %s",
@@ -320,7 +336,7 @@ def _resolve_blob_content(
         )
         return open(blob_ref, "rb"), content_type, filename  # noqa: SIM115
 
-    # Attempt 2: blob_ref relative to configured BlobStore root
+    # ---- Strategy 3: blob_ref relative to configured BlobStore root ----
     blob_store_root: str = current_app.config.get(
         "BLOBSTORE_ROOT",
         os.path.join(current_app.instance_path, "blobs"),
@@ -336,12 +352,9 @@ def _resolve_blob_content(
         return open(full_path, "rb"), content_type, filename  # noqa: SIM115
 
     logger.warning(
-        "Blob content not found for asset %d: blob_ref='%s', "
-        "tried paths: absolute='%s', relative='%s'.",
+        "Blob content not found for asset %d: blob_ref='%s'.",
         asset.id,
         blob_ref,
-        blob_ref,
-        full_path,
     )
     abort(
         404,
@@ -350,6 +363,114 @@ def _resolve_blob_content(
             f"{blob_ref}"
         ),
     )
+
+
+def _resolve_via_blobstore(
+    asset: Asset,
+    store_name: str,
+    blob_uuid: str,
+    content_type: str,
+    filename: str,
+) -> Optional[tuple[Any, str, str]]:
+    """Resolve blob content through BlobStore configuration lookup.
+
+    Looks up the BlobStore's root directory from its database
+    configuration and constructs the content-addressable file path using
+    ID-prefix-based directory nesting (matching
+    :class:`~src.app.storage.file_blobstore.FileBlobStore`).
+
+    Path convention::
+
+        <root>/content/<s1>/<s2>/<s3>/<uuid>.bytes
+
+    where ``<s1>/<s2>/<s3>`` are the first 6 hex characters of the UUID
+    (hyphens stripped), split into 3 segments of 2 characters each.
+
+    Args:
+        asset: The :class:`Asset` instance (for logging context).
+        store_name: BlobStore name (e.g., ``'default'``).
+        blob_uuid: UUID portion of the blob reference.
+        content_type: MIME type for the response.
+        filename: Suggested download filename.
+
+    Returns:
+        A 3-tuple ``(stream, content_type, filename)`` if the file is
+        found, or ``None`` if it cannot be resolved.
+    """
+    from src.app.models.blobstore_config import BlobStoreConfig
+
+    # Look up BlobStore configuration for the root path
+    config: Optional[BlobStoreConfig] = db.session.get(
+        BlobStoreConfig, store_name
+    )
+    if config is None:
+        logger.debug(
+            "BlobStore config '%s' not found for asset %d.",
+            store_name,
+            asset.id,
+        )
+        # Fall back to BLOBSTORE_ROOT with store_name subdirectory
+        blob_store_root: str = current_app.config.get(
+            "BLOBSTORE_ROOT",
+            os.path.join(current_app.instance_path, "blobs"),
+        )
+        store_root = os.path.join(blob_store_root, store_name)
+    else:
+        # Extract root path from configuration
+        cfg_dict = config.configuration or {}
+        store_root = cfg_dict.get("path", "")
+        if not store_root:
+            # Fallback to BLOBSTORE_ROOT/<store_name>
+            blob_store_root = current_app.config.get(
+                "BLOBSTORE_ROOT",
+                os.path.join(current_app.instance_path, "blobs"),
+            )
+            store_root = os.path.join(blob_store_root, store_name)
+
+    # Compute the nested content path: content/<s1>/<s2>/<s3>/<uuid>.bytes
+    hex_id = blob_uuid.replace("-", "")
+    segments: list[str] = []
+    path_depth = 3
+    segment_len = 2
+    for i in range(path_depth):
+        start = i * segment_len
+        end = start + segment_len
+        if end <= len(hex_id):
+            segments.append(hex_id[start:end])
+        else:
+            segments.append(hex_id[start:].ljust(segment_len, "0"))
+
+    content_path = os.path.join(
+        store_root, "content", *segments, f"{blob_uuid}.bytes"
+    )
+
+    if os.path.isfile(content_path):
+        logger.debug(
+            "Resolved asset %d blob via BlobStore '%s': %s",
+            asset.id,
+            store_name,
+            content_path,
+        )
+        return open(content_path, "rb"), content_type, filename  # noqa: SIM115
+
+    # Also try flat path under content directory (legacy fallback)
+    flat_path = os.path.join(store_root, "content", f"{blob_uuid}.bytes")
+    if os.path.isfile(flat_path):
+        logger.debug(
+            "Resolved asset %d blob via flat content path: %s",
+            asset.id,
+            flat_path,
+        )
+        return open(flat_path, "rb"), content_type, filename  # noqa: SIM115
+
+    logger.debug(
+        "Blob file not found for asset %d at nested path '%s' "
+        "or flat path '%s'.",
+        asset.id,
+        content_path,
+        flat_path,
+    )
+    return None
 
 
 def _stream_file_chunks(stream: Any, chunk_size: int = _STREAM_CHUNK_SIZE):

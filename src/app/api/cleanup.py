@@ -56,6 +56,7 @@ from typing import Any, Dict, List, Optional
 
 from flask import current_app, jsonify, request
 from flask_smorest import Blueprint, abort
+import marshmallow
 from marshmallow import Schema, fields, validate
 
 from src.app.auth.authentication import login_required
@@ -241,7 +242,11 @@ class CleanupPolicyUpdateSchema(Schema):
     """Request schema for updating an existing cleanup policy.
 
     Validates the incoming JSON body for PUT /api/v1/cleanup-policies/<id>.
-    All fields are optional — only supplied fields are updated.
+    All fields are optional — only supplied fields are updated.  Fields
+    that are **not present** in the request body are excluded from the
+    deserialized output (via ``EXCLUDE`` unknown handling and no
+    ``load_default``), so the handler can distinguish "not provided" from
+    "explicitly set to null".
 
     Attributes:
         name: New policy name (optional).
@@ -251,14 +256,12 @@ class CleanupPolicyUpdateSchema(Schema):
     """
 
     name = fields.String(
-        load_default=None,
         validate=validate.Length(min=1, max=255),
         metadata={
             "description": "Updated human-readable policy name.",
         },
     )
     format = fields.String(
-        load_default=None,
         allow_none=True,
         validate=validate.OneOf(
             SUPPORTED_FORMATS,
@@ -272,7 +275,6 @@ class CleanupPolicyUpdateSchema(Schema):
     )
     criteria = fields.Dict(
         keys=fields.String(),
-        load_default=None,
         metadata={
             "description": (
                 "Updated cleanup criteria dictionary. "
@@ -281,13 +283,16 @@ class CleanupPolicyUpdateSchema(Schema):
         },
     )
     description = fields.String(
-        load_default=None,
         allow_none=True,
         validate=validate.Length(max=2000),
         metadata={
             "description": "Updated description.",
         },
     )
+
+    class Meta:
+        """Only include fields actually present in the request body."""
+        unknown = marshmallow.EXCLUDE
 
 
 class CleanupPolicyResponseSchema(Schema):
@@ -1292,6 +1297,30 @@ def run_cleanup() -> Any:
 # ===========================================================================
 
 
+def _extract_blueprint_error_message(error: Any, default: str) -> str:
+    """Extract a human-readable error message from an HTTPException.
+
+    flask-smorest's ``abort()`` stores extra data in ``error.data`` (a dict
+    with a ``'message'`` key).  Standard Flask ``abort()`` stores the message
+    in ``error.description``.  This helper handles both cases so that custom
+    messages are always surfaced in JSON error responses.
+
+    Args:
+        error: The caught exception (typically a Werkzeug HTTPException).
+        default: Fallback message if extraction fails.
+
+    Returns:
+        The extracted error message string.
+    """
+    data = getattr(error, "data", None)
+    if isinstance(data, dict) and "message" in data:
+        return str(data["message"])
+    desc = getattr(error, "description", None)
+    if desc:
+        return str(desc)
+    return default
+
+
 @cleanup_bp.errorhandler(404)
 def handle_not_found(error: Any) -> Any:
     """Handle 404 Not Found errors within the cleanup blueprint.
@@ -1304,8 +1333,8 @@ def handle_not_found(error: Any) -> Any:
     Returns:
         JSON error response with HTTP 404 status.
     """
-    message: str = getattr(error, "description", "Resource not found.")
-    return jsonify({"error": "Not Found", "message": message}), 404
+    message: str = _extract_blueprint_error_message(error, "Resource not found.")
+    return jsonify({"error": {"code": 404, "message": message}}), 404
 
 
 @cleanup_bp.errorhandler(400)
@@ -1320,8 +1349,8 @@ def handle_bad_request(error: Any) -> Any:
     Returns:
         JSON error response with HTTP 400 status.
     """
-    message: str = getattr(error, "description", "Bad request.")
-    return jsonify({"error": "Bad Request", "message": message}), 400
+    message: str = _extract_blueprint_error_message(error, "Bad request.")
+    return jsonify({"error": {"code": 400, "message": message}}), 400
 
 
 @cleanup_bp.errorhandler(409)
@@ -1336,8 +1365,8 @@ def handle_conflict(error: Any) -> Any:
     Returns:
         JSON error response with HTTP 409 status.
     """
-    message: str = getattr(error, "description", "Resource conflict.")
-    return jsonify({"error": "Conflict", "message": message}), 409
+    message: str = _extract_blueprint_error_message(error, "Resource conflict.")
+    return jsonify({"error": {"code": 409, "message": message}}), 409
 
 
 # ===========================================================================

@@ -418,11 +418,17 @@ class AssetResponseSchema(Schema):
         Returns:
             The enriched output dictionary with computed fields.
         """
-        # Compute download_url if missing
+        # Compute download_url if missing — ensure a '/' separator is
+        # always present between repository name and path even when the
+        # stored path does not start with '/'.
         repo_name = data.get('repository_name')
         asset_path = data.get('path')
         if not data.get('download_url') and repo_name and asset_path:
-            data['download_url'] = f'/repository/{repo_name}{asset_path}'
+            # Normalise: strip any trailing '/' from repo_name, strip any
+            # leading '/' from asset_path, then join with exactly one '/'.
+            clean_repo = repo_name.rstrip('/')
+            clean_path = asset_path.lstrip('/')
+            data['download_url'] = f'/repository/{clean_repo}/{clean_path}'
 
         # Add human-readable file size
         raw_size = data.get('size')

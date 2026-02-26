@@ -821,7 +821,7 @@ def handle_bad_request(error: Any) -> tuple:
     """Handle 400 Bad Request errors with consistent JSON response."""
     message: str = _get_error_message(error, "Bad request")
     logger.warning("Bad request on repositories API: %s", message)
-    return jsonify({"message": message, "status": 400}), 400
+    return jsonify({"error": {"code": 400, "message": message}}), 400
 
 
 @repositories_bp.errorhandler(404)
@@ -829,7 +829,7 @@ def handle_not_found(error: Any) -> tuple:
     """Handle 404 Not Found errors with consistent JSON response."""
     message: str = _get_error_message(error, "Resource not found")
     logger.warning("Resource not found on repositories API: %s", message)
-    return jsonify({"message": message, "status": 404}), 404
+    return jsonify({"error": {"code": 404, "message": message}}), 404
 
 
 @repositories_bp.errorhandler(409)
@@ -837,7 +837,7 @@ def handle_conflict(error: Any) -> tuple:
     """Handle 409 Conflict errors with consistent JSON response."""
     message: str = _get_error_message(error, "Conflict")
     logger.warning("Conflict on repositories API: %s", message)
-    return jsonify({"message": message, "status": 409}), 409
+    return jsonify({"error": {"code": 409, "message": message}}), 409
 
 
 @repositories_bp.errorhandler(422)
@@ -855,9 +855,9 @@ def handle_validation_error(error: Any) -> tuple:
     if isinstance(data, dict):
         errors = data.get("errors")
 
-    response: Dict[str, Any] = {"message": message, "status": 422}
+    response: Dict[str, Any] = {"error": {"code": 422, "message": message}}
     if errors:
-        response["errors"] = errors
+        response["error"]["errors"] = errors
 
     logger.warning("Validation error on repositories API: %s", message)
     return jsonify(response), 422
@@ -876,7 +876,7 @@ def handle_internal_error(error: Any) -> tuple:
         message,
         exc_info=True,
     )
-    return jsonify({"message": "Internal server error", "status": 500}), 500
+    return jsonify({"error": {"code": 500, "message": "Internal server error"}}), 500
 
 
 # ---------------------------------------------------------------------------
