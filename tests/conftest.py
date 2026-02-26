@@ -459,9 +459,12 @@ def auth_headers(app, admin_user):
     Returns:
         dict: HTTP headers with JWT Bearer token and JSON content type.
     """
-    # Use timezone-aware UTC datetime for token expiry
+    # Use timezone-aware UTC datetime for token expiry.
+    # The JWT realm requires "sub", "iat", and "exp" claims.
+    # "sub" is used by jwt_realm.py to identify the user (payload.get("sub")).
     token_payload = {
-        "user_id": admin_user.user_id,
+        "sub": admin_user.user_id,
+        "iat": datetime.now(tz=timezone.utc),
         "exp": datetime.now(tz=timezone.utc) + timedelta(hours=1),
     }
 
