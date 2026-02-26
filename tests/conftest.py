@@ -105,6 +105,7 @@ from src.app.models import (
     Asset,
     User,
     Role,
+    RoleAssignment,
     Privilege,
     ContentSelector,
     TaskDefinition,
@@ -236,6 +237,14 @@ def db_session(app, init_db):
        connection is closed.  The session factory is then restored to
        bind to the default engine.
 
+    **Robustness:**
+
+    All teardown steps are individually wrapped in try/except to ensure
+    that failures at any cleanup step do not prevent subsequent steps
+    from executing.  This eliminates connection pool exhaustion and
+    session contention when the full test suite (799+ tests) runs as
+    a single pytest invocation.
+
     This replaces the MyBatis 3.5.15 test session management from the
     Java source system.
 
@@ -255,27 +264,40 @@ def db_session(app, init_db):
 
         # Remove any existing session from the scoped registry, then
         # reconfigure the session factory to bind to the test connection.
-        # This is the Flask-SQLAlchemy 3.x testing pattern: the scoped
-        # session now routes all ORM operations through ``connection``,
-        # which has an uncommitted ``transaction``.  Any ``db.session.commit()``
-        # calls inside the test flush to this connection but do NOT reach
-        # the database — the outer ``transaction.rollback()`` in teardown
-        # discards everything.
         db.session.remove()
         db.session.configure(bind=connection)
 
         yield db.session
 
         # Teardown — roll back everything and restore default binding.
-        db.session.rollback()
-        db.session.remove()
-        transaction.rollback()
-        connection.close()
+        # Each step is individually guarded to prevent cascading failures
+        # that could leave connections unreturned to the pool (root cause
+        # of the full-suite hang at ~22% progress).
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        try:
+            db.session.remove()
+        except Exception:
+            pass
+        try:
+            if transaction.is_active:
+                transaction.rollback()
+        except Exception:
+            pass
+        try:
+            connection.close()
+        except Exception:
+            pass
 
         # Restore the session factory to use the engine (default pool)
         # so that subsequent fixtures and tests get a clean session
         # bound to the engine rather than the now-closed connection.
-        db.session.configure(bind=db.engine)
+        try:
+            db.session.configure(bind=db.engine)
+        except Exception:
+            pass
 
 
 # ============================================================================
@@ -363,6 +385,57 @@ def clean_db(request):
 
 
 # ============================================================================
+# 3b. Webhook Dispatcher Cleanup Fixture
+# ============================================================================
+# Ensures the WebhookDispatcher's ThreadPoolExecutor worker threads are
+# shut down after each test function.  Without this, webhook delivery
+# retries that use ``time.sleep(delay)`` in background threads accumulate
+# across tests and block the combined test suite from completing.
+# ============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_webhook_dispatcher(request):
+    """Shut down the WebhookDispatcher after each test function.
+
+    The WebhookDispatcher (F-503) uses a ThreadPoolExecutor for async
+    delivery with exponential-backoff retries.  When deliveries fail
+    (e.g. in test environments where webhook URLs are unreachable), worker
+    threads sleep in retry loops.  If not cleaned up, these sleeping
+    threads accumulate and block the test suite.
+
+    This fixture:
+    1. Yields control to the test.
+    2. On teardown, retrieves the WebhookDispatcher from app extensions.
+    3. Calls ``shutdown(wait=False)`` to cancel pending work immediately.
+    4. Creates a fresh dispatcher so the next test starts clean.
+    """
+    yield
+
+    try:
+        app = request.getfixturevalue("app")
+    except Exception:
+        return
+
+    dispatcher = app.extensions.get("webhook_dispatcher")
+    if dispatcher is not None:
+        try:
+            dispatcher.shutdown(wait=False)
+        except Exception:
+            pass
+
+        # Replace with a fresh dispatcher for the next test so that the
+        # shutdown event is reset and the executor is functional again.
+        try:
+            from src.app.webhooks.dispatcher import WebhookDispatcher
+            fresh = WebhookDispatcher()
+            fresh.register_event_listeners()
+            app.extensions["webhook_dispatcher"] = fresh
+        except Exception:
+            pass
+
+
+# ============================================================================
 # 4. HTTP Client Fixtures
 # ============================================================================
 # Flask's built-in test client replaces an HTTP client for making API
@@ -432,17 +505,21 @@ def runner(app):
 
 @pytest.fixture
 def admin_user(app, db_session):
-    """Create an admin user for testing authenticated endpoints.
+    """Create an admin user with full RBAC privileges for testing.
 
     Creates a ``User`` instance with:
         - ``user_id='admin'``
         - ``email='admin@test.com'``
         - ``status='active'``
-        - Password set to ``'admin123'`` via ``set_password()``
+        - Password set to ``'Admin123!'`` via ``set_password()``
 
-    The user is persisted to the test database and available for
-    authentication in downstream fixtures (``auth_headers``,
-    ``api_key_headers``).
+    Also creates the complete RBAC privilege chain:
+        - ``nx-all`` wildcard privilege (grants unrestricted access)
+        - ``nx-admin`` role containing the ``nx-all`` privilege
+        - ``RoleAssignment`` linking the admin user to the ``nx-admin`` role
+
+    This ensures the admin user passes all ``@require_permission`` checks
+    across every API blueprint (blobstores, repositories, users, etc.).
 
     Replaces the Apache Shiro 2.0.0 test security realm setup from the
     Java source system.
@@ -465,7 +542,47 @@ def admin_user(app, db_session):
         # lowercase, digit, and special character.
         user.set_password("Admin123!")
         db.session.add(user)
+
+        # Create (or reuse) the wildcard privilege (Tier 1 — system-wide).
+        # Use merge to handle cases where _init_database already seeded
+        # the privilege during application factory creation.
+        nx_all_priv = db.session.get(Privilege, "nx-all")
+        if nx_all_priv is None:
+            nx_all_priv = Privilege(
+                privilege_id="nx-all",
+                type="wildcard",
+                name="All permissions",
+                description="Wildcard privilege granting unrestricted access",
+                properties={},
+            )
+            db.session.add(nx_all_priv)
+
+        # Create (or reuse) the admin role containing the wildcard privilege.
+        admin_role = db.session.get(Role, "nx-admin")
+        if admin_role is None:
+            admin_role = Role(
+                role_id="nx-admin",
+                name="Administrator",
+                description="Full system administration role",
+                privileges=["nx-all"],
+            )
+            db.session.add(admin_role)
+
         db.session.commit()
+
+        # Create the role assignment linking admin user → nx-admin role.
+        # Done after the initial commit so that FK constraints are satisfied.
+        existing_assignment = db.session.get(
+            RoleAssignment, {"user_id": "admin", "role_id": "nx-admin"}
+        )
+        if existing_assignment is None:
+            role_assignment = RoleAssignment(
+                user_id="admin",
+                role_id="nx-admin",
+            )
+            db.session.add(role_assignment)
+            db.session.commit()
+
         # Eagerly load all attributes before yielding so that accessing
         # properties outside this context doesn't trigger a lazy load
         # on a detached instance.

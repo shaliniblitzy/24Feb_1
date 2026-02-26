@@ -671,7 +671,7 @@ def get_privilege(privilege_id: str) -> Privilege:
     """
     logger.info("Fetching privilege: '%s'.", privilege_id)
 
-    privilege: Optional[Privilege] = Privilege.query.get(privilege_id)
+    privilege: Optional[Privilege] = db.session.get(Privilege, privilege_id)
     if privilege is None:
         logger.warning("Privilege not found: '%s'.", privilege_id)
         abort(404, message=f"Privilege not found: '{privilege_id}'")
@@ -747,7 +747,7 @@ def create_privilege(payload: Dict[str, Any]) -> Privilege:
     _validate_privilege_properties(privilege_type, properties)
 
     # Check for duplicate privilege_id.
-    existing: Optional[Privilege] = Privilege.query.get(privilege_id)
+    existing: Optional[Privilege] = db.session.get(Privilege, privilege_id)
     if existing is not None:
         logger.warning(
             "Privilege already exists: '%s'.",
@@ -905,7 +905,7 @@ def update_privilege(
         )
 
     # Look up the existing privilege.
-    privilege: Optional[Privilege] = Privilege.query.get(privilege_id)
+    privilege: Optional[Privilege] = db.session.get(Privilege, privilege_id)
     if privilege is None:
         logger.warning(
             "Privilege not found for update: '%s'.",
@@ -1026,7 +1026,7 @@ def delete_privilege(privilege_id: str) -> str:
         )
 
     # Look up the privilege.
-    privilege: Optional[Privilege] = Privilege.query.get(privilege_id)
+    privilege: Optional[Privilege] = db.session.get(Privilege, privilege_id)
     if privilege is None:
         logger.warning(
             "Privilege not found for deletion: '%s'.",
@@ -1275,7 +1275,7 @@ def update_content_selector(
     """
     logger.info("Updating content selector: '%s'.", selector_id)
 
-    selector: Optional[ContentSelector] = ContentSelector.query.get(
+    selector: Optional[ContentSelector] = db.session.get(ContentSelector, 
         selector_id
     )
     if selector is None:
@@ -1383,7 +1383,7 @@ def delete_content_selector(selector_id: str) -> str:
     """
     logger.info("Deleting content selector: '%s'.", selector_id)
 
-    selector: Optional[ContentSelector] = ContentSelector.query.get(
+    selector: Optional[ContentSelector] = db.session.get(ContentSelector, 
         selector_id
     )
     if selector is None:

@@ -264,8 +264,6 @@ class ComponentSchema(Schema):
     class Meta:
         """Schema meta-configuration."""
 
-        ordered = True
-
 
 # ===========================================================================
 # ComponentDetailSchema — Extended Component with Assets
@@ -393,8 +391,6 @@ class SearchResultAssetBriefSchema(Schema):
     class Meta:
         """Schema meta-configuration."""
 
-        ordered = True
-
 
 # ===========================================================================
 # ComponentSearchResultSchema — Search Result Representation
@@ -492,8 +488,6 @@ class ComponentSearchResultSchema(Schema):
 
     class Meta:
         """Schema meta-configuration."""
-
-        ordered = True
 
 
 # ===========================================================================
@@ -617,8 +611,6 @@ class ComponentUploadSchema(Schema):
     class Meta:
         """Schema meta-configuration."""
 
-        ordered = True
-
 
 # ===========================================================================
 # ComponentListQuerySchema — Listing/Filtering Query Parameters
@@ -717,8 +709,6 @@ class ComponentListQuerySchema(Schema):
 
     class Meta:
         """Schema meta-configuration."""
-
-        ordered = True
 
 
 # ---------------------------------------------------------------------------

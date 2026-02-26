@@ -161,6 +161,17 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+]
+filterwarnings = [
+    # Suppress RemovedInMarshmallow4Warning from flask-smorest pagination
+    # (third-party library using deprecated 'ordered' Meta option).
+    "ignore:The `ordered` `class Meta` option is deprecated:DeprecationWarning:marshmallow",
+    # Suppress LegacyAPIWarning from any remaining SQLAlchemy Query.get()
+    # usage in out-of-scope files.
+    "ignore::sqlalchemy.exc.LegacyAPIWarning",
+]
 
 # -----------------------------------------------------------------------------
 # Black Code Formatter Configuration

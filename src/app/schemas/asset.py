@@ -295,7 +295,6 @@ class AssetSchema(Schema):
 
     class Meta:
         """Schema meta-configuration."""
-        ordered = True
 
 
 class AssetResponseSchema(Schema):
@@ -444,7 +443,6 @@ class AssetResponseSchema(Schema):
 
     class Meta:
         """Schema meta-configuration."""
-        ordered = True
 
 
 class AssetUploadSchema(Schema):
@@ -523,7 +521,6 @@ class AssetUploadSchema(Schema):
 
     class Meta:
         """Schema meta-configuration."""
-        ordered = True
 
 
 class AssetListQuerySchema(Schema):
@@ -604,7 +601,6 @@ class AssetListQuerySchema(Schema):
 
     class Meta:
         """Schema meta-configuration."""
-        ordered = True
 
 
 # ---------------------------------------------------------------------------

@@ -199,7 +199,7 @@ def _get_role_or_404(role_id: str) -> Role:
     Raises:
         HTTPException: 404 Not Found if no role with the given ID exists.
     """
-    role: Optional[Role] = Role.query.get(role_id)
+    role: Optional[Role] = db.session.get(Role, role_id)
     if role is None:
         logger.warning("Role not found: role_id='%s'.", role_id)
         abort(404, message=f"Role '{role_id}' not found.")
@@ -240,7 +240,7 @@ def _validate_privilege_ids(privilege_ids: List[str]) -> List[str]:
 
     invalid_ids: List[str] = []
     for privilege_id in privilege_ids:
-        existing: Optional[Privilege] = Privilege.query.get(privilege_id)
+        existing: Optional[Privilege] = db.session.get(Privilege, privilege_id)
         if existing is None:
             invalid_ids.append(privilege_id)
         else:
@@ -269,7 +269,7 @@ def _validate_user_ids(user_ids: List[str]) -> List[str]:
 
     invalid_ids: List[str] = []
     for user_id in user_ids:
-        existing: Optional[User] = User.query.get(user_id)
+        existing: Optional[User] = db.session.get(User, user_id)
         if existing is None:
             invalid_ids.append(user_id)
     return invalid_ids
@@ -407,7 +407,7 @@ def create_role(role_data: dict) -> Role:
     new_name: str = role_data["name"]
 
     # Check for duplicate role_id
-    existing_by_id: Optional[Role] = Role.query.get(new_role_id)
+    existing_by_id: Optional[Role] = db.session.get(Role, new_role_id)
     if existing_by_id is not None:
         logger.warning(
             "Attempted to create duplicate role: role_id='%s'.",
@@ -896,7 +896,7 @@ def assign_role_to_user(role_id: str, user_id: str) -> RoleAssignment:
     _get_role_or_404(role_id)
 
     # Validate user existence
-    user: Optional[User] = User.query.get(user_id)
+    user: Optional[User] = db.session.get(User, user_id)
     if user is None:
         logger.warning(
             "User not found for role assignment: user_id='%s'.",

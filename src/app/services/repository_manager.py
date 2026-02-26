@@ -57,7 +57,7 @@ from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 
-from flask import current_app
+from flask import current_app, g, has_request_context
 
 from src.app.extensions import db
 from src.app.models.repository import Repository
@@ -161,6 +161,34 @@ DEFAULT_HOSTED_ATTRIBUTES: dict[str, Any] = {
         "strict_content_type_validation": True,
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Request Context Helper
+# ---------------------------------------------------------------------------
+# Safely extracts the authenticated user's ID from the Flask request
+# context (g.current_user) for inclusion in event payloads.  Returns
+# None when called outside a request context (e.g., scheduled tasks).
+# ---------------------------------------------------------------------------
+
+
+def _get_request_user_id() -> str | None:
+    """Extract the current authenticated user_id from Flask g context.
+
+    Returns:
+        The user_id string if a user is authenticated in the current
+        request, or ``None`` if called outside a request context or
+        when no user is authenticated.
+    """
+    if not has_request_context():
+        return None
+    try:
+        current_user = getattr(g, "current_user", None)
+        if current_user is not None:
+            return getattr(current_user, "user_id", None)
+    except RuntimeError:
+        pass
+    return None
 
 
 # ===========================================================================
@@ -368,7 +396,7 @@ class RepositoryManager:
         self._validate_blobstore(blob_store_name)
 
         # Uniqueness check
-        existing = Repository.query.get(name)
+        existing = db.session.get(Repository, name)
         if existing is not None:
             raise RepositoryExistsError(repository_name=name)
 
@@ -478,6 +506,7 @@ class RepositoryManager:
                 "type": repo_type,
                 "blob_store_name": blob_store_name,
                 "online": online,
+                "user_id": _get_request_user_id(),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -503,7 +532,7 @@ class RepositoryManager:
         Returns:
             The ``Repository`` instance if found, or ``None``.
         """
-        return Repository.query.get(name)
+        return db.session.get(Repository, name)
 
     def get_repository_or_raise(self, name: str) -> Repository:
         """Retrieve a repository by name, raising if not found.
@@ -518,7 +547,7 @@ class RepositoryManager:
             RepositoryNotFoundError: If no repository with the given name
                 exists.
         """
-        repository = Repository.query.get(name)
+        repository = db.session.get(Repository, name)
         if repository is None:
             raise RepositoryNotFoundError(repository_name=name)
         return repository
@@ -627,6 +656,7 @@ class RepositoryManager:
                 "format": repository.format,
                 "type": repository.type,
                 "online": repository.online,
+                "user_id": _get_request_user_id(),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -720,6 +750,7 @@ class RepositoryManager:
                 "name": name,
                 "format": repo_format,
                 "type": repo_type,
+                "user_id": _get_request_user_id(),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -1072,6 +1103,7 @@ class RepositoryManager:
                 "component_name": component_name,
                 "component_version": component_version,
                 "namespace": component_namespace,
+                "user_id": _get_request_user_id(),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -1132,7 +1164,7 @@ class RepositoryManager:
                     component_id=parent_component_id
                 ).count()
                 if remaining == 0:
-                    orphan = Component.query.get(parent_component_id)
+                    orphan = db.session.get(Component, parent_component_id)
                     if orphan is not None:
                         db.session.delete(orphan)
                         db.session.commit()
@@ -1471,7 +1503,7 @@ class RepositoryManager:
             )
 
         for member_name in member_names:
-            member = Repository.query.get(member_name)
+            member = db.session.get(Repository, member_name)
             if member is None:
                 raise InvalidRepositoryConfigError(
                     f"Group member repository '{member_name}' does not "
@@ -1527,7 +1559,7 @@ class RepositoryManager:
                     repository_name=group_name,
                 )
 
-            member = Repository.query.get(member_name)
+            member = db.session.get(Repository, member_name)
             if member is not None and member.type == "group":
                 nested_members = member.group_members
                 if nested_members:
@@ -1547,7 +1579,7 @@ class RepositoryManager:
         Raises:
             InvalidRepositoryConfigError: If the BlobStore does not exist.
         """
-        blobstore = BlobStoreConfig.query.get(blob_store_name)
+        blobstore = db.session.get(BlobStoreConfig, blob_store_name)
         if blobstore is None:
             raise InvalidRepositoryConfigError(
                 f"BlobStore '{blob_store_name}' does not exist"

@@ -93,18 +93,21 @@ def admin_privileges(admin_user, db_session):
         admin_user: The pre-seeded admin user from ``conftest.py``.
         db_session: The per-test transactional database session.
     """
-    # 1. Wildcard privilege — grants all access unconditionally
+    # The admin_user fixture in conftest.py now creates the full RBAC chain
+    # (nx-all privilege, nx-admin role, and role assignment).  Use
+    # INSERT OR IGNORE to gracefully handle cases where the records
+    # already exist from the parent fixture, while still creating them
+    # if the clean_db autouse fixture removed them between tests.
     db.session.execute(
         text(
-            "INSERT INTO privileges (privilege_id, type, name) "
+            "INSERT OR IGNORE INTO privileges (privilege_id, type, name) "
             "VALUES (:pid, :ptype, :pname)"
         ),
         {"pid": "nx-all", "ptype": "wildcard", "pname": "All permissions"},
     )
-    # 2. Admin role referencing the wildcard privilege
     db.session.execute(
         text(
-            "INSERT INTO roles (role_id, name, privileges, source) "
+            "INSERT OR IGNORE INTO roles (role_id, name, privileges, source) "
             "VALUES (:rid, :rname, :privs, :src)"
         ),
         {
@@ -114,10 +117,9 @@ def admin_privileges(admin_user, db_session):
             "src": "internal",
         },
     )
-    # 3. Role assignment linking admin user to nx-admin role
     db.session.execute(
         text(
-            "INSERT INTO role_assignments (user_id, role_id) "
+            "INSERT OR IGNORE INTO role_assignments (user_id, role_id) "
             "VALUES (:uid, :rid)"
         ),
         {"uid": admin_user.user_id, "rid": "nx-admin"},

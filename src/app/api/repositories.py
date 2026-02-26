@@ -313,7 +313,7 @@ def get_repository(repository_name: str) -> Repository:
         404: If the repository does not exist.
     """
     # Direct model query for efficient single-key lookup (Repository PK is name)
-    repository: Optional[Repository] = Repository.query.get(repository_name)
+    repository: Optional[Repository] = db.session.get(Repository, repository_name)
     if repository is None:
         abort(404, message=f"Repository '{repository_name}' not found")
 
@@ -360,7 +360,7 @@ def create_repository(args: Dict[str, Any]) -> Repository:
     """
     # -- Pre-validation: BlobStore existence check --
     blob_store_name: str = args.get("blob_store_name", "default")
-    blob_store: Optional[BlobStoreConfig] = BlobStoreConfig.query.get(blob_store_name)
+    blob_store: Optional[BlobStoreConfig] = db.session.get(BlobStoreConfig, blob_store_name)
     if blob_store is None:
         current_app.logger.warning(
             "BlobStore '%s' not found during repository creation", blob_store_name
@@ -474,7 +474,7 @@ def update_repository(
     # -- Pre-validation: BlobStore existence check (if being changed) --
     new_blob_store: Optional[str] = args.get("blob_store_name")
     if new_blob_store is not None:
-        if BlobStoreConfig.query.get(new_blob_store) is None:
+        if db.session.get(BlobStoreConfig, new_blob_store) is None:
             abort(
                 422,
                 message=f"BlobStore '{new_blob_store}' does not exist",

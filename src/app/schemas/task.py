@@ -306,7 +306,6 @@ class TaskCreateSchema(Schema):
         """Schema configuration."""
 
         strict = True
-        ordered = True
 
     # -- Fields --------------------------------------------------------------
 
@@ -490,7 +489,6 @@ class TaskDefinitionSchema(Schema):
         """Schema configuration."""
 
         strict = True
-        ordered = True
 
     # -- Fields --------------------------------------------------------------
 
@@ -668,7 +666,6 @@ class TaskExecutionSchema(Schema):
         """Schema configuration."""
 
         strict = True
-        ordered = True
 
     # -- Fields --------------------------------------------------------------
 
@@ -814,7 +811,6 @@ class TaskRunRequestSchema(Schema):
         """Schema configuration."""
 
         strict = True
-        ordered = True
 
     # -- Fields --------------------------------------------------------------
 

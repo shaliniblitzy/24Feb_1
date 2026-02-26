@@ -51,7 +51,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
-from flask import current_app
+from flask import current_app, g, has_request_context
 from prometheus_client import Counter, Histogram
 
 from src.app.events.event_bus import subscribe
@@ -191,6 +191,29 @@ class AuditLogSubscriber:
 
             user_id: Optional[str] = payload.get("user_id")
             ip_address: Optional[str] = payload.get("ip_address")
+
+            # Fallback: extract user_id from the Flask request context
+            # (g.current_user) when the event payload does not include it.
+            # This ensures audit events always capture the authenticated
+            # user who triggered the action, even if the emitting service
+            # code did not explicitly pass user_id in the payload (F-303).
+            if user_id is None and has_request_context():
+                try:
+                    current_user = getattr(g, "current_user", None)
+                    if current_user is not None:
+                        user_id = getattr(current_user, "user_id", None)
+                except RuntimeError:
+                    # Outside request context — keep user_id as None
+                    pass
+
+            # Fallback: extract ip_address from the Flask request when
+            # the event payload does not include it.
+            if ip_address is None and has_request_context():
+                try:
+                    from flask import request as _flask_request
+                    ip_address = _flask_request.remote_addr
+                except (RuntimeError, ImportError):
+                    pass
             domain: str = self._get_domain(event_type)
 
             # Determine the string representation of the event type

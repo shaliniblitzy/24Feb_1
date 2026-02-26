@@ -223,6 +223,7 @@ class WebhookDispatcher:
         self._delivery_log: List[WebhookDeliveryResult] = []
         self._delivery_log_max: int = 1000
         self._lock: threading.Lock = threading.Lock()
+        self._shutdown_event: threading.Event = threading.Event()
         self.logger: logging.Logger = logging.getLogger(
             f"{__name__}.WebhookDispatcher"
         )
@@ -459,7 +460,19 @@ class WebhookDispatcher:
                     attempt + 1,
                     max_attempts,
                 )
-                time.sleep(delay)
+                # Use Event.wait() instead of time.sleep() so that
+                # the retry can be interrupted immediately when
+                # shutdown() is called — prevents the thread pool
+                # from blocking during test teardown or app shutdown.
+                if self._shutdown_event.wait(delay):
+                    # Shutdown was requested — abort delivery retries.
+                    self.logger.debug(
+                        "Webhook '%s' delivery %s: shutdown requested, "
+                        "aborting retries.",
+                        webhook.name,
+                        delivery_id,
+                    )
+                    break
 
             result = self._deliver_once(
                 webhook, event_type, payload, delivery_id, attempt + 1
@@ -912,10 +925,52 @@ class WebhookDispatcher:
             wait: If ``True`` (default), block until all pending
                 deliveries complete.  If ``False``, cancel pending
                 work immediately.
+
+        Note:
+            During interpreter shutdown or pytest teardown, logging
+            handler streams may already be closed, causing the
+            ``logging`` module's internal ``handleError`` to emit
+            ``ValueError: I/O operation on closed file`` tracebacks.
+            To prevent this, we temporarily disable logging on all
+            handlers before emitting shutdown messages, then restore
+            the original levels.
         """
-        self.logger.info("Webhook dispatcher shutting down (wait=%s)", wait)
+        # Temporarily disable logging handlers to prevent
+        # "I/O operation on closed file" errors during shutdown.
+        # This avoids the logging module's internal handleError path.
+        saved_levels = []
+        try:
+            for handler in logging.root.handlers:
+                saved_levels.append((handler, handler.level))
+                handler.setLevel(logging.CRITICAL + 1)
+        except Exception:
+            pass
+
+        try:
+            self.logger.info(
+                "Webhook dispatcher shutting down (wait=%s)", wait,
+            )
+        except Exception:
+            pass
+
+        # Signal all sleeping _deliver_with_retry workers to wake up
+        # and abort so the executor can shut down promptly.
+        self._shutdown_event.set()
+
         self._executor.shutdown(wait=wait)
-        self.logger.info("Webhook dispatcher shut down")
+
+        try:
+            self.logger.info("Webhook dispatcher shut down")
+        except Exception:
+            pass
+
+        # Restore handler levels (best-effort — may fail if handlers
+        # are already torn down).
+        for handler, level in saved_levels:
+            try:
+                handler.setLevel(level)
+            except Exception:
+                pass
 
     def __del__(self) -> None:
         """Ensure the executor is shut down on garbage collection."""

@@ -1079,7 +1079,7 @@ class UploadManager:
         )
 
         # Get BlobStore configuration from database
-        config = BlobStoreConfig.query.get(repository.blob_store_name)
+        config = db.session.get(BlobStoreConfig, repository.blob_store_name)
         if config is None:
             self.logger.error(
                 "BlobStore configuration not found: '%s' for repository '%s'",
@@ -1512,7 +1512,7 @@ class UploadManager:
             blob_ref: The blob reference string to delete.
         """
         try:
-            config = BlobStoreConfig.query.get(repository.blob_store_name)
+            config = db.session.get(BlobStoreConfig, repository.blob_store_name)
             if config is None:
                 self.logger.warning(
                     "BlobStore config not found for blob deletion: '%s'",

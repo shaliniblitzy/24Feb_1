@@ -334,7 +334,19 @@ class TestAuthenticationChain:
             realm1.authenticate.assert_not_called()
 
     def test_login_required_authenticated(self, app, client, db_session):
-        """An authenticated request passes through the login_required decorator."""
+        """An authenticated request passes through the login_required decorator.
+
+        Tests the login_required decorator without dynamically registering
+        routes on the session-scoped Flask app.  Uses a function-scoped
+        Flask app to avoid 'setup method can no longer be called' errors
+        when the session-scoped app has already handled its first request.
+        """
+        from src.app.factory import create_app as _create_app
+
+        # Create a function-scoped app instance that has not handled
+        # any requests yet — safe to add routes dynamically.
+        test_app = _create_app("testing")
+
         mock_user = MagicMock(spec=User)
         mock_user.user_id = "admin"
 
@@ -342,14 +354,18 @@ class TestAuthenticationChain:
             authenticated=True, user=mock_user, realm_name="local",
         )
 
-        with patch("src.app.auth.authentication.authenticate_request", return_value=success_result):
-            @app.route("/test-login-req-auth-ok")
-            @login_required
-            def test_view():
-                return "OK", 200
+        @test_app.route("/test-login-req-auth-ok")
+        @login_required
+        def test_view():
+            return "OK", 200
 
-            resp = client.get("/test-login-req-auth-ok")
-            assert resp.status_code == 200
+        with test_app.test_client() as test_client:
+            with patch(
+                "src.app.auth.authentication.authenticate_request",
+                return_value=success_result,
+            ):
+                resp = test_client.get("/test-login-req-auth-ok")
+                assert resp.status_code == 200
 
     def test_login_required_unauthenticated(self, app, client, db_session):
         """An unauthenticated request returns 401 via the decorator."""

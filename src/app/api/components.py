@@ -300,7 +300,7 @@ def get_component(component_id: int) -> tuple:
     assets = Asset.query.filter(Asset.component_id == component_id).all()
 
     # Derive format from the parent repository
-    repository: Optional[Repository] = Repository.query.get(
+    repository: Optional[Repository] = db.session.get(Repository, 
         component.repository_name
     )
     format_name: str = repository.format if repository else "unknown"
@@ -421,7 +421,7 @@ def upload_component() -> tuple:
     version: Optional[str] = validated.get("version")
 
     # ---- Validate repository exists and is hosted ----
-    repository: Optional[Repository] = Repository.query.get(repository_name)
+    repository: Optional[Repository] = db.session.get(Repository, repository_name)
     if repository is None:
         logger.warning(
             "upload_component: repository '%s' not found.",
@@ -614,7 +614,7 @@ def delete_component(component_id: int) -> tuple:
     # ---- Check repository-scoped 'delete' permission ----
     user = getattr(g, "current_user", None)
     if user is not None:
-        repository: Optional[Repository] = Repository.query.get(
+        repository: Optional[Repository] = db.session.get(Repository, 
             repository_name
         )
         format_name: str = (
@@ -645,7 +645,7 @@ def delete_component(component_id: int) -> tuple:
     component_name: str = component.name
     component_version: Optional[str] = component.version
     component_namespace: Optional[str] = component.namespace
-    repository_obj: Optional[Repository] = Repository.query.get(
+    repository_obj: Optional[Repository] = db.session.get(Repository, 
         repository_name
     )
     format_str: str = repository_obj.format if repository_obj else "unknown"

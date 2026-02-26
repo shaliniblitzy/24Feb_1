@@ -174,7 +174,6 @@ class UserCreateSchema(Schema):
         """Schema-level configuration."""
 
         strict = True
-        ordered = True
 
     # -- Required Fields -----------------------------------------------------
 
@@ -329,7 +328,6 @@ class UserUpdateSchema(Schema):
         """Schema-level configuration."""
 
         strict = True
-        ordered = True
 
     # -- Optional Fields (all fields are optional for partial update) ---------
 
@@ -457,7 +455,6 @@ class UserResponseSchema(Schema):
         """Schema-level configuration."""
 
         strict = True
-        ordered = True
 
     # -- Identification Fields -----------------------------------------------
 
@@ -599,7 +596,6 @@ class UserChangePasswordSchema(Schema):
         """Schema-level configuration."""
 
         strict = True
-        ordered = True
 
     current_password = fields.String(
         required=True,
@@ -692,7 +688,6 @@ class UserApiKeySchema(Schema):
         """Schema-level configuration."""
 
         strict = True
-        ordered = True
 
     api_key = fields.String(
         dump_only=True,
