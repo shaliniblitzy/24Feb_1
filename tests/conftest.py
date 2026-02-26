@@ -191,14 +191,23 @@ def init_db(app):
         flask_sqlalchemy.SQLAlchemy: The initialised ``db`` extension
         instance, ready for use in downstream fixtures.
     """
+    # Create tables in a short-lived context so the session-scope
+    # ``init_db`` fixture does NOT keep an app context alive for the
+    # entire run.  A persistent session-scope context collides with
+    # the function-scope ``client`` fixture's own app context, producing
+    # "Popped wrong app context" errors during teardown.
     with app.app_context():
-        # Create all 14 entity tables (Repository, Component, Asset, User,
-        # Role, RoleAssignment, Privilege, ContentSelector, TaskDefinition,
-        # TaskExecution, AuditEvent, BlobStoreConfig, CleanupPolicy,
-        # SystemConfig) plus base mixin columns (timestamps, soft-delete,
-        # JSON attributes).
+        # Create all 14 entity tables (Repository, Component, Asset,
+        # User, Role, RoleAssignment, Privilege, ContentSelector,
+        # TaskDefinition, TaskExecution, AuditEvent, BlobStoreConfig,
+        # CleanupPolicy, SystemConfig) plus base mixin columns
+        # (timestamps, soft-delete, JSON attributes).
         db.create_all()
-        yield db
+
+    yield db
+
+    # Teardown — drop tables in their own context
+    with app.app_context():
         db.drop_all()
 
 
@@ -283,22 +292,35 @@ def clean_db(request):
         # If no app fixture is available, skip cleanup silently
         return
 
-    with app.app_context():
+    # Only push a *new* app context if one is not already active.
+    # When the ``client`` fixture is in use its ``with app.app_context()``
+    # block is still alive during teardown.  Pushing another context
+    # causes "Popped wrong app context" errors on exit.
+    from flask.globals import _cv_app  # noqa: WPS433 — Flask internal
+    existing_ctx = _cv_app.get(None)
+    needs_context = existing_ctx is None or existing_ctx.app is not app
+    if needs_context:
+        ctx = app.app_context()
+        ctx.push()
+
+    try:
+        # Roll back any pending transaction
+        db.session.rollback()
+
+        # Truncate all tables in reverse dependency order
+        for table in reversed(db.metadata.sorted_tables):
+            db.session.execute(table.delete())
+
+        db.session.commit()
+    except Exception:
+        # If cleanup itself fails, ensure we at least rollback
         try:
-            # Roll back any pending transaction
             db.session.rollback()
-
-            # Truncate all tables in reverse dependency order
-            for table in reversed(db.metadata.sorted_tables):
-                db.session.execute(table.delete())
-
-            db.session.commit()
         except Exception:
-            # If cleanup itself fails, ensure we at least rollback
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
+            pass
+    finally:
+        if needs_context:
+            ctx.pop()
 
 
 # ============================================================================
@@ -328,9 +350,16 @@ def client(app, init_db):
     Yields:
         flask.testing.FlaskClient: A Flask test client instance.
     """
-    with app.test_client() as testing_client:
-        with app.app_context():
-            yield testing_client
+    # Push a *single* app context for the test and yield the client.
+    # Using ``app.test_client()`` as a context manager together with a
+    # nested ``with app.app_context():`` caused "Popped wrong app
+    # context" errors because Flask's test client can push/pop request
+    # contexts that interfere with a manually-pushed outer app context.
+    ctx = app.app_context()
+    ctx.push()
+    testing_client = app.test_client()
+    yield testing_client
+    ctx.pop()
 
 
 @pytest.fixture(scope="function")
