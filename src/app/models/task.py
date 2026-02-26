@@ -62,6 +62,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Integer,
     JSON,
     String,
     Text,
@@ -417,13 +418,15 @@ class TaskExecution(BaseModel, TimestampMixin):
     # -- Primary Key ---------------------------------------------------------
 
     execution_id: int = Column(
-        BigInteger,
+        BigInteger().with_variant(Integer, "sqlite"),
         primary_key=True,
         autoincrement=True,
         doc=(
             "Auto-incrementing execution record identifier.  Uses BigInteger "
-            "to support high-volume task execution tracking without overflow "
-            "(Integer max ~2.1B rows is insufficient for long-running systems)."
+            "on PostgreSQL to support high-volume task execution tracking "
+            "without overflow (Integer max ~2.1B rows is insufficient for "
+            "long-running systems).  Falls back to Integer on SQLite for "
+            "ROWID alias compatibility with autoincrement."
         ),
     )
 
