@@ -684,14 +684,19 @@ def list_webhooks() -> Any:
 
 
 @webhooks_bp.route("/", methods=["POST"])
+@webhooks_bp.arguments(WebhookCreateSchema)
 @login_required
 @require_permission("webhooks", "create")
-def create_webhook() -> Any:
+def create_webhook(data: Dict[str, Any]) -> Any:
     """Create a new webhook configuration.
 
     Validates the request body against :class:`WebhookCreateSchema`,
     constructs a :class:`WebhookConfig`, checks for name conflicts, and
     registers the webhook with the dispatcher.
+
+    Args:
+        data: Deserialized request body from ``WebhookCreateSchema``
+            (injected by ``@webhooks_bp.arguments``).
 
     Request Body:
         name (str):              Required — unique webhook identifier.
@@ -713,17 +718,6 @@ def create_webhook() -> Any:
         403: Insufficient privileges (``webhooks:create``).
         409: Webhook name already exists.
     """
-    # Parse and validate request body
-    schema = WebhookCreateSchema()
-    raw_data: Optional[Dict[str, Any]] = request.get_json(silent=True)
-    if raw_data is None:
-        abort(400, message="Request body must be valid JSON.")
-
-    errors = schema.validate(raw_data)
-    if errors:
-        abort(400, message=f"Validation errors: {errors}")
-
-    data: Dict[str, Any] = schema.load(raw_data)
 
     # Validate event types against EventType enum
     _validate_event_types(data["event_types"])
@@ -818,9 +812,10 @@ def get_webhook(webhook_id: str) -> Any:
 
 
 @webhooks_bp.route("/<string:webhook_id>", methods=["PUT"])
+@webhooks_bp.arguments(WebhookUpdateSchema)
 @login_required
 @require_permission("webhooks", "update")
-def update_webhook(webhook_id: str) -> Any:
+def update_webhook(data: Dict[str, Any], webhook_id: str) -> Any:
     """Update an existing webhook configuration.
 
     Applies partial updates to the webhook identified by *webhook_id*.
@@ -831,6 +826,8 @@ def update_webhook(webhook_id: str) -> Any:
     bus handlers for the new event type set.
 
     Args:
+        data: Deserialized request body from ``WebhookUpdateSchema``
+            (injected by ``@webhooks_bp.arguments``).
         webhook_id: The webhook name / identifier (URL path parameter).
 
     Request Body:
@@ -854,18 +851,6 @@ def update_webhook(webhook_id: str) -> Any:
     if existing is None:
         logger.debug("Webhook not found for update: '%s'.", webhook_id)
         abort(404, message=f"Webhook '{webhook_id}' not found.")
-
-    # Parse and validate request body
-    schema = WebhookUpdateSchema()
-    raw_data: Optional[Dict[str, Any]] = request.get_json(silent=True)
-    if raw_data is None:
-        abort(400, message="Request body must be valid JSON.")
-
-    errors = schema.validate(raw_data)
-    if errors:
-        abort(400, message=f"Validation errors: {errors}")
-
-    data: Dict[str, Any] = schema.load(raw_data)
 
     # Validate event_types if provided
     if "event_types" in data:

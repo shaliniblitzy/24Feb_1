@@ -71,7 +71,7 @@ import re
 import uuid
 from typing import Any, Dict, List, Optional
 
-from flask import current_app, request
+from flask import current_app, jsonify
 from flask_smorest import Blueprint, abort
 from marshmallow import Schema, ValidationError, fields, validate, validates
 
@@ -116,6 +116,48 @@ privileges_bp: Blueprint = Blueprint(
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Pagination Defaults
+# ---------------------------------------------------------------------------
+
+DEFAULT_PAGE_SIZE: int = 50
+"""Default number of privileges returned per page."""
+
+MAX_PAGE_SIZE: int = 200
+"""Maximum number of privileges allowed per page."""
+
+
+class PrivilegeListQuerySchema(Schema):
+    """Marshmallow schema for ``list_privileges`` query parameters.
+
+    Provides optional filtering by privilege ``type`` and pagination
+    via ``page`` and ``page_size``.
+    """
+
+    type = fields.String(
+        load_default=None,
+        metadata={
+            "description": (
+                "Filter by privilege type (application, repository-admin, "
+                "repository-view, repository-content-selector, wildcard)."
+            ),
+        },
+    )
+    page = fields.Integer(
+        load_default=1,
+        metadata={"description": "Page number (1-based, default 1)."},
+    )
+    page_size = fields.Integer(
+        load_default=DEFAULT_PAGE_SIZE,
+        metadata={
+            "description": (
+                f"Results per page (1–{MAX_PAGE_SIZE}, default "
+                f"{DEFAULT_PAGE_SIZE})."
+            ),
+        },
+    )
+
 
 #: Valid privilege type identifiers corresponding to the three-tier RBAC model.
 VALID_PRIVILEGE_TYPES: frozenset[str] = frozenset(
@@ -528,34 +570,44 @@ def _generate_selector_id(name: str) -> str:
 
 
 @privileges_bp.route("/privileges", methods=["GET"])
-@privileges_bp.response(200, PrivilegeSchema(many=True))
+@privileges_bp.arguments(PrivilegeListQuerySchema, location="query")
 @login_required
 @require_permission("privileges", "read")
-def list_privileges() -> List[Privilege]:
-    """List all privilege descriptors.
+def list_privileges(args: dict) -> tuple:
+    """List all privilege descriptors with pagination.
 
-    Returns all privileges in the system, optionally filtered by privilege
-    type.  Supports the five RBAC privilege types: ``application``,
-    ``repository-admin``, ``repository-view``,
-    ``repository-content-selector``, and ``wildcard``.
+    Returns privileges in the system, optionally filtered by privilege
+    type, with pagination via ``page`` and ``page_size``.  Supports the
+    five RBAC privilege types: ``application``, ``repository-admin``,
+    ``repository-view``, ``repository-content-selector``, and ``wildcard``.
 
     **Query Parameters:**
 
     - ``type`` (str, optional): Filter by privilege type.
+    - ``page`` (int, optional): Page number (1-based, default 1).
+    - ``page_size`` (int, optional): Results per page (1–200, default 50).
 
-    **Response:** 200 OK — Array of privilege descriptor objects.
+    **Response:** 200 OK — JSON object with ``items``, ``total_count``,
+    ``page``, and ``page_size``.
     """
-    type_filter: Optional[str] = request.args.get("type")
+    type_filter: Optional[str] = args.get("type")
+    page: int = max(1, args.get("page", 1))
+    page_size: int = max(1, min(args.get("page_size", DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE))
 
     # Use application-level logger for request-scoped structured logging
     # complementing the module-level logger (AAP Section 0.7.2).
     current_app.logger.debug(
-        "Privilege list requested (type_filter=%s).", type_filter
+        "Privilege list requested (type_filter=%s, page=%d).",
+        type_filter,
+        page,
     )
     logger.info(
-        "Listing privileges (type_filter=%s).",
+        "Listing privileges (type_filter=%s, page=%d).",
         type_filter,
+        page,
     )
+
+    query = Privilege.query
 
     if type_filter:
         # Validate the type filter value.
@@ -573,14 +625,27 @@ def list_privileges() -> List[Privilege]:
                     f"{', '.join(sorted(VALID_PRIVILEGE_TYPES))}"
                 ),
             )
-        privileges: List[Privilege] = Privilege.query.filter_by(
-            type=type_filter
-        ).all()
-    else:
-        privileges = Privilege.query.all()
+        query = query.filter_by(type=type_filter)
 
-    logger.info("Returning %d privilege(s).", len(privileges))
-    return privileges
+    total_count: int = query.count()
+    offset: int = (page - 1) * page_size
+
+    privileges: List[Privilege] = (
+        query.order_by(Privilege.privilege_id)
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
+
+    logger.info("Returning %d/%d privilege(s).", len(privileges), total_count)
+
+    schema = PrivilegeSchema(many=True)
+    return jsonify({
+        "items": schema.dump(privileges),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+    })
 
 
 @privileges_bp.route(

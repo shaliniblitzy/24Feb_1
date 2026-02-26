@@ -63,8 +63,9 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from flask import request
+from flask import jsonify, request
 from flask_smorest import Blueprint, abort
+from marshmallow import Schema, fields as ma_fields
 
 from src.app.auth.authentication import login_required
 from src.app.auth.authorization import require_permission
@@ -92,6 +93,47 @@ logger: logging.Logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Pagination Defaults
+# ---------------------------------------------------------------------------
+
+DEFAULT_PAGE_SIZE: int = 50
+"""Default number of roles returned per page."""
+
+MAX_PAGE_SIZE: int = 200
+"""Maximum number of roles allowed per page."""
+
+
+class RoleListQuerySchema(Schema):
+    """Marshmallow schema for ``list_roles`` query parameters.
+
+    Provides optional filtering by ``source`` plus pagination via
+    ``page`` and ``page_size``.
+    """
+
+    source = ma_fields.String(
+        load_default=None,
+        metadata={
+            "description": (
+                "Filter roles by source: 'default'/'internal' or 'external'."
+            ),
+        },
+    )
+    page = ma_fields.Integer(
+        load_default=1,
+        metadata={"description": "Page number (1-based, default 1)."},
+    )
+    page_size = ma_fields.Integer(
+        load_default=DEFAULT_PAGE_SIZE,
+        metadata={
+            "description": (
+                f"Results per page (1–{MAX_PAGE_SIZE}, default "
+                f"{DEFAULT_PAGE_SIZE})."
+            ),
+        },
+    )
+
 
 BUILTIN_ROLE_IDS: frozenset[str] = frozenset({"nx-admin", "nx-anonymous"})
 """Role IDs that are system-defined and protected from modification/deletion.
@@ -236,14 +278,16 @@ def _validate_user_ids(user_ids: List[str]) -> List[str]:
 
 
 @roles_bp.route("/", methods=["GET"])
-@roles_bp.response(200, RoleSchema(many=True))
+@roles_bp.arguments(RoleListQuerySchema, location="query")
 @login_required
 @require_permission("roles", "read")
-def list_roles() -> List[Role]:
-    """List all security roles.
+def list_roles(args: dict) -> tuple:
+    """List all security roles with pagination.
 
-    Retrieves all roles from the database with optional filtering by the
-    ``source`` query parameter.  Supports the following source values:
+    Retrieves roles from the database with optional filtering by the
+    ``source`` query parameter and pagination via ``page`` / ``page_size``.
+
+    Supports the following source values:
 
     - ``'default'`` or ``'internal'`` — locally-created roles.
     - ``'external'`` — roles mapped from LDAP/AD or SSO providers.
@@ -252,11 +296,16 @@ def list_roles() -> List[Role]:
 
     Query Parameters:
         source (str, optional): Filter roles by source classification.
+        page (int, optional): Page number (1-based, default 1).
+        page_size (int, optional): Results per page (1–200, default 50).
 
     Returns:
-        A JSON array of serialized role objects.
+        JSON object with ``items`` (list of serialized role objects),
+        ``total_count``, ``page``, and ``page_size``.
     """
-    source_filter: Optional[str] = request.args.get("source")
+    source_filter: Optional[str] = args.get("source")
+    page: int = max(1, args.get("page", 1))
+    page_size: int = max(1, min(args.get("page_size", DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE))
 
     query = Role.query
 
@@ -267,19 +316,41 @@ def list_roles() -> List[Role]:
         )
         if resolved_source is None:
             logger.info(
-                "Unknown source filter value '%s'; returning empty list.",
+                "Unknown source filter value '%s'; returning empty result.",
                 source_filter,
             )
-            return []
+            return jsonify({
+                "items": [],
+                "total_count": 0,
+                "page": page,
+                "page_size": page_size,
+            })
         query = query.filter(Role.source == resolved_source)
 
-    roles: List[Role] = query.order_by(Role.role_id).all()
-    logger.debug(
-        "Listed %d role(s) (source_filter='%s').",
-        len(roles),
-        source_filter,
+    total_count: int = query.count()
+    offset: int = (page - 1) * page_size
+
+    roles: List[Role] = (
+        query.order_by(Role.role_id)
+        .offset(offset)
+        .limit(page_size)
+        .all()
     )
-    return roles
+    logger.debug(
+        "Listed %d/%d role(s) (source_filter='%s', page=%d).",
+        len(roles),
+        total_count,
+        source_filter,
+        page,
+    )
+
+    schema = _role_list_schema
+    return jsonify({
+        "items": schema.dump(roles),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+    })
 
 
 @roles_bp.route("/<string:role_id>", methods=["GET"])

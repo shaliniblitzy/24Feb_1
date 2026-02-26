@@ -55,6 +55,7 @@ from typing import Any, Dict, Optional
 
 from flask import current_app, g, jsonify, request
 from flask_smorest import Blueprint, abort
+from marshmallow import Schema, fields as ma_fields
 
 from src.app.auth.authentication import login_required
 from src.app.auth.authorization import (
@@ -88,6 +89,84 @@ from src.app.services.repository_manager import (
 # ---------------------------------------------------------------------------
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Pagination Defaults
+# ---------------------------------------------------------------------------
+# Used by the ``list_repositories`` endpoint for large-scale deployments.
+# Consistent with pagination defaults in ``components.py`` and ``assets.py``.
+# ---------------------------------------------------------------------------
+
+DEFAULT_PAGE_SIZE: int = 50
+"""Default number of repositories returned per page."""
+
+MAX_PAGE_SIZE: int = 200
+"""Maximum number of repositories allowed per page."""
+
+
+# ---------------------------------------------------------------------------
+# Inline Marshmallow Schemas
+# ---------------------------------------------------------------------------
+
+
+class RepositoryStatusSchema(Schema):
+    """Marshmallow schema for the ``set_repository_status`` request body.
+
+    Validates the ``online`` boolean field for setting a repository's
+    online/offline status.  Replaces inline ``request.get_json()`` parsing
+    with declarative schema validation for consistency with other endpoints.
+    """
+
+    online = ma_fields.Boolean(
+        required=True,
+        metadata={
+            "description": (
+                "Target online state: true to start (STOPPED → STARTED), "
+                "false to stop (STARTED → STOPPED)."
+            ),
+        },
+    )
+
+
+class RepositoryListQuerySchema(Schema):
+    """Marshmallow schema for ``list_repositories`` query parameters.
+
+    Provides optional filtering by repository ``format`` and ``type``,
+    plus pagination via ``page`` and ``page_size``.
+    """
+
+    format = ma_fields.String(
+        load_default=None,
+        metadata={
+            "description": (
+                "Filter by repository format (e.g., maven2, npm, docker)."
+            ),
+        },
+    )
+    type = ma_fields.String(
+        load_default=None,
+        metadata={
+            "description": (
+                "Filter by repository type (hosted, proxy, group)."
+            ),
+        },
+    )
+    page = ma_fields.Integer(
+        load_default=1,
+        metadata={
+            "description": "Page number (1-based, default 1).",
+        },
+    )
+    page_size = ma_fields.Integer(
+        load_default=DEFAULT_PAGE_SIZE,
+        metadata={
+            "description": (
+                f"Results per page (1–{MAX_PAGE_SIZE}, default "
+                f"{DEFAULT_PAGE_SIZE})."
+            ),
+        },
+    )
+
 
 # ---------------------------------------------------------------------------
 # Blueprint Definition
@@ -154,42 +233,67 @@ def _get_current_user_id() -> Optional[str]:
 
 
 @repositories_bp.route("/", methods=["GET"])
-@repositories_bp.response(200, RepositoryResponseSchema(many=True))
+@repositories_bp.arguments(RepositoryListQuerySchema, location="query")
 @login_required
-def list_repositories() -> list[Repository]:
-    """List all repositories with optional format and type filtering.
+def list_repositories(args: dict) -> tuple:
+    """List all repositories with optional format/type filtering and pagination.
 
     Supports query parameter filtering to narrow down results by repository
     format (e.g. ``maven2``, ``npm``) and/or type (``hosted``, ``proxy``,
-    ``group``).
+    ``group``).  Pagination via ``page`` and ``page_size`` prevents
+    unbounded response payloads in large-scale deployments.
 
     Query Parameters:
         format (str, optional): Filter by repository format.
         type (str, optional): Filter by repository type.
+        page (int, optional): Page number (1-based, default 1).
+        page_size (int, optional): Results per page (1–200, default 50).
 
     Returns:
-        JSON array of repository objects serialised via
-        ``RepositoryResponseSchema(many=True)``.
+        JSON object with ``items`` (list of repository objects),
+        ``total_count``, ``page``, and ``page_size``.
     """
-    format_filter: Optional[str] = request.args.get("format", type=str)
-    type_filter: Optional[str] = request.args.get("type", type=str)
+    format_filter: Optional[str] = args.get("format")
+    type_filter: Optional[str] = args.get("type")
+    page: int = max(1, args.get("page", 1))
+    page_size: int = max(1, min(args.get("page_size", DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE))
 
-    manager: RepositoryManager = RepositoryManager()
-    repositories: list[Repository] = manager.list_repositories(
-        format_type=format_filter,
-        repo_type=type_filter,
+    # Build filtered query
+    query = Repository.query
+
+    if format_filter:
+        query = query.filter(Repository.format == format_filter)
+    if type_filter:
+        query = query.filter(Repository.type == type_filter)
+
+    total_count: int = query.count()
+    offset: int = (page - 1) * page_size
+
+    repositories: list[Repository] = (
+        query.order_by(Repository.name)
+        .offset(offset)
+        .limit(page_size)
+        .all()
     )
 
     user_id: Optional[str] = _get_current_user_id()
     logger.info(
-        "Listed %d repositories (format=%s, type=%s) by user '%s'",
+        "Listed %d/%d repositories (format=%s, type=%s, page=%d) by user '%s'",
         len(repositories),
+        total_count,
         format_filter or "all",
         type_filter or "all",
+        page,
         user_id or "unknown",
     )
 
-    return repositories
+    schema = RepositoryResponseSchema(many=True)
+    return jsonify({
+        "items": schema.dump(repositories),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+    })
 
 
 @repositories_bp.route("/<string:repository_name>", methods=["GET"])
@@ -503,10 +607,11 @@ def delete_repository(repository_name: str) -> None:
 
 
 @repositories_bp.route("/<string:repository_name>/status", methods=["PUT"])
+@repositories_bp.arguments(RepositoryStatusSchema)
 @repositories_bp.response(200, RepositoryResponseSchema)
 @login_required
 @require_repository_permission("admin")
-def set_repository_status(repository_name: str) -> Repository:
+def set_repository_status(payload: dict, repository_name: str) -> Repository:
     """Set a repository's online/offline status.
 
     Accepts a JSON body with an ``online`` boolean field.  When set to
@@ -514,6 +619,8 @@ def set_repository_status(repository_name: str) -> Repository:
     ``False``, the repository is stopped (STARTED → STOPPED).
 
     Args:
+        payload: Deserialized request body with ``online`` boolean
+            (injected by ``@repositories_bp.arguments(RepositoryStatusSchema)``).
         repository_name: Unique repository name (URL path parameter).
 
     Returns:
@@ -524,17 +631,7 @@ def set_repository_status(repository_name: str) -> Repository:
         409: If the lifecycle state transition is invalid.
         422: If the request body is missing or invalid.
     """
-    body: Dict[str, Any] = request.get_json(silent=True) or {}
-    online_value: Any = body.get("online")
-
-    if online_value is None:
-        abort(
-            422,
-            message="Request body must include 'online' (boolean)",
-        )
-
-    if not isinstance(online_value, bool):
-        abort(422, message="'online' must be a boolean value")
+    online_value: bool = payload["online"]
 
     manager: RepositoryManager = RepositoryManager()
     try:

@@ -65,7 +65,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from flask import current_app, jsonify, request
+from flask import jsonify
 from flask_smorest import Blueprint, abort
 from marshmallow import Schema, fields, validate
 
@@ -407,9 +407,10 @@ def get_blobstore(blob_store_name: str) -> tuple:
 
 
 @blobstores_bp.route("/", methods=["POST"])
+@blobstores_bp.arguments(BlobStoreCreateSchema)
 @login_required
 @require_permission("blobstores", "create")
-def create_blobstore() -> tuple:
+def create_blobstore(validated: Dict[str, Any]) -> tuple:
     """Create a new BlobStore configuration.
 
     Supports two backend types:
@@ -429,21 +430,6 @@ def create_blobstore() -> tuple:
         400: Invalid configuration.
         409: BlobStore name already exists.
     """
-    # -- Parse and validate request body ------------------------------------
-    data: Optional[Dict[str, Any]] = request.get_json(silent=True)
-    if data is None:
-        logger.warning("Create BlobStore request has no JSON body.")
-        abort(400, message="Request body must be valid JSON.")
-
-    schema = BlobStoreCreateSchema()
-    errors = schema.validate(data)
-    if errors:
-        logger.warning(
-            "Create BlobStore validation errors: %s", errors,
-        )
-        abort(400, message=f"Validation error: {errors}")
-
-    validated: Dict[str, Any] = schema.load(data)
     name: str = validated["name"]
     store_type: str = validated["type"]
     configuration: Dict[str, Any] = validated["configuration"]
@@ -495,9 +481,10 @@ def create_blobstore() -> tuple:
 
 
 @blobstores_bp.route("/<string:blob_store_name>", methods=["PUT"])
+@blobstores_bp.arguments(BlobStoreUpdateSchema)
 @login_required
 @require_permission("blobstores", "update")
-def update_blobstore(blob_store_name: str) -> tuple:
+def update_blobstore(validated: Dict[str, Any], blob_store_name: str) -> tuple:
     """Update the configuration of an existing BlobStore.
 
     Only the ``configuration`` dictionary may be updated.  The BlobStore
@@ -508,6 +495,8 @@ def update_blobstore(blob_store_name: str) -> tuple:
     Credentials must be re-submitted if changed.
 
     Args:
+        validated: Deserialized request body from ``BlobStoreUpdateSchema``
+            (injected by ``@blobstores_bp.arguments``).
         blob_store_name: The unique BlobStore identifier (URL path param).
 
     **Authentication:** Required (``blobstores:update`` privilege).
@@ -520,26 +509,6 @@ def update_blobstore(blob_store_name: str) -> tuple:
         400: Invalid configuration.
         404: BlobStore not found.
     """
-    # -- Parse and validate request body ------------------------------------
-    data: Optional[Dict[str, Any]] = request.get_json(silent=True)
-    if data is None:
-        logger.warning(
-            "Update BlobStore '%s' request has no JSON body.",
-            blob_store_name,
-        )
-        abort(400, message="Request body must be valid JSON.")
-
-    schema = BlobStoreUpdateSchema()
-    errors = schema.validate(data)
-    if errors:
-        logger.warning(
-            "Update BlobStore '%s' validation errors: %s",
-            blob_store_name,
-            errors,
-        )
-        abort(400, message=f"Validation error: {errors}")
-
-    validated: Dict[str, Any] = schema.load(data)
     configuration: Dict[str, Any] = validated["configuration"]
 
     logger.info(
@@ -666,9 +635,10 @@ def delete_blobstore(blob_store_name: str) -> tuple:
 
 
 @blobstores_bp.route("/<string:blob_store_name>/quota", methods=["PUT"])
+@blobstores_bp.arguments(BlobStoreQuotaSchema)
 @login_required
 @require_permission("blobstores", "update")
-def set_blobstore_quota(blob_store_name: str) -> tuple:
+def set_blobstore_quota(validated: Dict[str, Any], blob_store_name: str) -> tuple:
     """Set or update a storage quota (soft limit) for a BlobStore.
 
     Quota types:
@@ -679,6 +649,8 @@ def set_blobstore_quota(blob_store_name: str) -> tuple:
     degradation but do not block writes.
 
     Args:
+        validated: Deserialized request body from ``BlobStoreQuotaSchema``
+            (injected by ``@blobstores_bp.arguments``).
         blob_store_name: The unique BlobStore identifier (URL path param).
 
     **Authentication:** Required (``blobstores:update`` privilege).
@@ -693,26 +665,6 @@ def set_blobstore_quota(blob_store_name: str) -> tuple:
         400: Invalid quota configuration.
         404: BlobStore not found.
     """
-    # -- Parse and validate request body ------------------------------------
-    data: Optional[Dict[str, Any]] = request.get_json(silent=True)
-    if data is None:
-        logger.warning(
-            "Set quota for BlobStore '%s' request has no JSON body.",
-            blob_store_name,
-        )
-        abort(400, message="Request body must be valid JSON.")
-
-    schema = BlobStoreQuotaSchema()
-    errors = schema.validate(data)
-    if errors:
-        logger.warning(
-            "Quota validation errors for BlobStore '%s': %s",
-            blob_store_name,
-            errors,
-        )
-        abort(400, message=f"Validation error: {errors}")
-
-    validated: Dict[str, Any] = schema.load(data)
     quota_type: str = validated["quota_type"]
     quota_limit: int = validated["quota_limit"]
     enabled: bool = validated.get("enabled", True)

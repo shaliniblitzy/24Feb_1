@@ -60,8 +60,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from flask import current_app, g, request
+from flask import current_app, g, jsonify, request
 from flask_smorest import Blueprint, abort
+from marshmallow import Schema, fields as ma_fields
 
 from src.app.auth.authentication import login_required
 from src.app.auth.authorization import require_permission
@@ -92,6 +93,58 @@ from src.app.schemas.user import (
 # ---------------------------------------------------------------------------
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Pagination Defaults
+# ---------------------------------------------------------------------------
+
+DEFAULT_PAGE_SIZE: int = 50
+"""Default number of users returned per page."""
+
+MAX_PAGE_SIZE: int = 200
+"""Maximum number of users allowed per page."""
+
+
+# ---------------------------------------------------------------------------
+# Inline Query Schemas
+# ---------------------------------------------------------------------------
+
+
+class UserListQuerySchema(Schema):
+    """Marshmallow schema for ``list_users`` query parameters.
+
+    Provides optional filtering by ``status`` and ``source``, plus
+    pagination via ``page`` and ``page_size``.
+    """
+
+    status = ma_fields.String(
+        load_default=None,
+        metadata={
+            "description": (
+                "Filter by account status (active, disabled, locked)."
+            ),
+        },
+    )
+    source = ma_fields.String(
+        load_default=None,
+        metadata={
+            "description": "Filter by user source (internal, external).",
+        },
+    )
+    page = ma_fields.Integer(
+        load_default=1,
+        metadata={"description": "Page number (1-based, default 1)."},
+    )
+    page_size = ma_fields.Integer(
+        load_default=DEFAULT_PAGE_SIZE,
+        metadata={
+            "description": (
+                f"Results per page (1–{MAX_PAGE_SIZE}, default "
+                f"{DEFAULT_PAGE_SIZE})."
+            ),
+        },
+    )
+
 
 # ---------------------------------------------------------------------------
 # Blueprint Definition
@@ -378,24 +431,35 @@ def handle_bad_request(error: Any) -> tuple:
 
 
 @users_bp.route("/", methods=["GET"])
-@users_bp.response(200, UserResponseSchema(many=True))
+@users_bp.arguments(UserListQuerySchema, location="query")
 @login_required
 @require_permission("users", "read")
-def list_users() -> List[Dict[str, Any]]:
-    """List all user accounts.
+def list_users(args: Dict[str, Any]) -> Any:
+    """List all user accounts with pagination.
 
-    Supports optional ``?status=`` query parameter for filtering by
-    account status (``active``, ``disabled``, ``locked``).
+    Supports optional filtering by account status
+    (``active``, ``disabled``, ``locked``) and pagination via ``page``
+    and ``page_size`` query parameters to prevent unbounded response
+    payloads in environments with many users.
 
     **Authorization:** Requires ``users:read`` system-wide privilege.
 
+    Query Parameters:
+        status (str, optional): Filter by account status.
+        source (str, optional): Filter by user source.
+        page (int, optional): Page number (1-based, default 1).
+        page_size (int, optional): Results per page (1–200, default 50).
+
     Returns:
-        A list of user representations.  Sensitive fields
-        (``password_hash``, ``api_key``, ``failed_login_count``) are
-        NEVER included.
+        JSON object with ``items`` (list of user representations),
+        ``total_count``, ``page``, and ``page_size``.
+        Sensitive fields (``password_hash``, ``api_key``,
+        ``failed_login_count``) are NEVER included.
     """
-    status_filter: Optional[str] = request.args.get("status")
-    source_filter: Optional[str] = request.args.get("source")
+    status_filter: Optional[str] = args.get("status")
+    source_filter: Optional[str] = args.get("source")
+    page: int = max(1, args.get("page", 1))
+    page_size: int = max(1, min(args.get("page_size", DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE))
 
     query = User.query
 
@@ -406,18 +470,35 @@ def list_users() -> List[Dict[str, Any]]:
             User.user_id.isnot(None)  # Baseline filter
         )
 
-    users: List[User] = query.all()
+    total_count: int = query.count()
+    offset: int = (page - 1) * page_size
+
+    users: List[User] = (
+        query.order_by(User.user_id)
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
 
     caller = getattr(g, "current_user", None)
     caller_id: str = getattr(caller, "user_id", "<unknown>") if caller else "<unknown>"
     current_app.logger.info(
-        "User list requested by '%s': %d user(s) returned "
-        "(status_filter=%s).",
+        "User list requested by '%s': %d/%d user(s) returned "
+        "(status_filter=%s, page=%d).",
         caller_id,
         len(users),
+        total_count,
         status_filter,
+        page,
     )
-    return [_user_to_response(u) for u in users]
+
+    schema = UserResponseSchema(many=True)
+    return jsonify({
+        "items": schema.dump([_user_to_response(u) for u in users]),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+    })
 
 
 # ===========================================================================

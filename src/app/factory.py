@@ -526,6 +526,7 @@ def _register_request_hooks(app: Flask) -> None:
         # Skip authentication for public endpoints
         skip_prefixes = (
             "/api/docs",
+            "/api/v1/health",
             "/swagger-ui",
             "/metrics",
             "/health",
@@ -830,7 +831,7 @@ def _init_monitoring(app: Flask) -> None:
     # Step 1: Health check registry (Feature F-401)
     try:
         health_registry = create_default_registry()
-        app.extensions["health_registry"] = health_registry
+        app.extensions["health_check_registry"] = health_registry
         logger.info(
             "Health check registry initialized with default checks"
         )
