@@ -1362,8 +1362,13 @@ class TestLDAPRealm:
                 assert realm.is_configured() is False
                 assert realm.supports({"username": "u", "password": "p"}) is False
             else:
-                # python-ldap IS installed; skip or pass
-                assert True
+                # python-ldap IS installed in this environment — the
+                # "not installed" scenario cannot be exercised.  Skip
+                # rather than silently passing with no assertions.
+                pytest.skip(
+                    "python-ldap is installed; cannot test "
+                    "LDAP-unavailable scenario in this environment"
+                )
 
     @patch("src.app.auth.realms.ldap_realm.ldap", create=True)
     def test_ldap_connection_cleanup(self, mock_ldap_mod, app, db_session):

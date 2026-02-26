@@ -215,13 +215,29 @@ def init_db(app):
 def db_session(app, init_db):
     """Provide a clean, transaction-isolated database session for each test.
 
-    Each test function receives a SQLAlchemy session wrapped in a
-    SAVEPOINT transaction.  After the test completes (whether passing or
-    failing), the transaction is rolled back — ensuring complete isolation
-    between tests without the cost of dropping/recreating the schema.
+    Each test function receives a SQLAlchemy session that is **bound to a
+    dedicated connection** with an open transaction.  After the test
+    completes (whether passing or failing), the transaction is rolled back
+    — ensuring complete isolation between tests without the cost of
+    dropping/recreating the schema.
 
-    This pattern replaces the MyBatis 3.5.15 test session management from
-    the Java source system.
+    **Isolation Mechanism (Flask-SQLAlchemy 3.x pattern):**
+
+    1. A raw connection is opened from the engine pool.
+    2. A top-level transaction is started on that connection.
+    3. The scoped session factory is *reconfigured* to bind to this
+       connection via ``db.session.configure(bind=connection)``.  This
+       ensures all ORM operations (queries, inserts, commits) executed
+       through ``db.session`` flow through the **same** underlying
+       connection and transaction — rather than obtaining a separate
+       pooled connection.
+    4. On teardown, the session is rolled back, removed from the scoped
+       registry, the connection transaction is rolled back, and the
+       connection is closed.  The session factory is then restored to
+       bind to the default engine.
+
+    This replaces the MyBatis 3.5.15 test session management from the
+    Java source system.
 
     Args:
         app: The session-scoped Flask application fixture.
@@ -230,22 +246,36 @@ def db_session(app, init_db):
 
     Yields:
         sqlalchemy.orm.scoping.scoped_session: A scoped SQLAlchemy session
-        that will be rolled back after the test completes.
+        bound to a test-specific connection that will be rolled back after
+        the test completes.
     """
     with app.app_context():
         connection = db.engine.connect()
         transaction = connection.begin()
 
-        # Bind the scoped session to this connection so all ORM operations
-        # within the test go through the same transaction.
-        session = db.session
+        # Remove any existing session from the scoped registry, then
+        # reconfigure the session factory to bind to the test connection.
+        # This is the Flask-SQLAlchemy 3.x testing pattern: the scoped
+        # session now routes all ORM operations through ``connection``,
+        # which has an uncommitted ``transaction``.  Any ``db.session.commit()``
+        # calls inside the test flush to this connection but do NOT reach
+        # the database — the outer ``transaction.rollback()`` in teardown
+        # discards everything.
+        db.session.remove()
+        db.session.configure(bind=connection)
 
-        yield session
+        yield db.session
 
-        # Roll back everything — the test's data modifications are discarded
-        session.rollback()
+        # Teardown — roll back everything and restore default binding.
+        db.session.rollback()
+        db.session.remove()
         transaction.rollback()
         connection.close()
+
+        # Restore the session factory to use the engine (default pool)
+        # so that subsequent fixtures and tests get a clean session
+        # bound to the engine rather than the now-closed connection.
+        db.session.configure(bind=db.engine)
 
 
 # ============================================================================
@@ -296,9 +326,18 @@ def clean_db(request):
     # When the ``client`` fixture is in use its ``with app.app_context()``
     # block is still alive during teardown.  Pushing another context
     # causes "Popped wrong app context" errors on exit.
-    from flask.globals import _cv_app  # noqa: WPS433 — Flask internal
-    existing_ctx = _cv_app.get(None)
-    needs_context = existing_ctx is None or existing_ctx.app is not app
+    #
+    # Uses Flask's public ``has_app_context()`` API instead of the private
+    # ``flask.globals._cv_app`` ContextVar, which is an undocumented
+    # internal that may change across Flask versions.
+    from flask import current_app, has_app_context
+
+    needs_context = True
+    if has_app_context():
+        try:
+            needs_context = current_app._get_current_object() is not app
+        except RuntimeError:
+            pass  # No app context after all — needs_context stays True
     if needs_context:
         ctx = app.app_context()
         ctx.push()
@@ -488,22 +527,52 @@ def auth_headers(app, admin_user):
 
 
 @pytest.fixture
-def api_key_headers(admin_user):
-    """Provide API key authentication headers.
+def api_key_headers(app, admin_user):
+    """Provide API key authentication headers with a matching DB record.
 
     Returns headers suitable for testing the NX-API-Key authentication
-    scheme (Feature F-304).  The API key is a static test value; in a
-    real deployment, API keys are generated per-user and stored hashed
-    in the database.
+    scheme (Feature F-304).  Unlike a static-only fixture, this also
+    persists the SHA-256 hash of the test API key into the ``admin_user``'s
+    ``api_key`` column so that the :class:`BearerTokenRealm` can validate
+    the key against the database backend during integration tests.
+
+    **How it works:**
+
+    1. The plaintext test key ``'test-api-key-12345'`` is hashed with
+       SHA-256 (matching :meth:`BearerTokenRealm._hash_api_key`).
+    2. The resulting hex digest is stored in ``admin_user.api_key``.
+    3. The header dict returned contains the **plaintext** key for the
+       test client to send.
+
+    This ensures that tests exercising the full authentication chain —
+    from HTTP header extraction through :class:`BearerTokenRealm`
+    database lookup — work end-to-end without mocking auth.
 
     Args:
+        app: The session-scoped Flask application fixture.
         admin_user: The admin user fixture (ensures user exists).
 
     Returns:
         dict: HTTP headers with NX-API-Key and JSON content type.
     """
+    import hashlib
+
+    test_api_key = "test-api-key-12345"
+
+    # Persist the SHA-256 hash of the test API key in the admin_user's
+    # api_key column.  This mirrors how BearerTokenRealm._find_user_by_api_key
+    # performs Phase 1 lookup: it hashes the incoming token and queries
+    # User.api_key for an exact match.
+    key_hash = hashlib.sha256(test_api_key.encode("utf-8")).hexdigest()
+
+    with app.app_context():
+        user = db.session.get(User, admin_user.user_id)
+        if user is not None:
+            user.api_key = key_hash
+            db.session.commit()
+
     return {
-        "NX-API-Key": "test-api-key-12345",
+        "NX-API-Key": test_api_key,
         "Content-Type": "application/json",
     }
 
