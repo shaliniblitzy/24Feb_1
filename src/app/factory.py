@@ -137,15 +137,25 @@ def _configure_logging(config_name: str) -> None:
             case _:
                 log_level_str = "DEBUG"
 
-    log_level: int = getattr(logging, log_level_str, logging.INFO)
+    # Validate the resolved level string maps to a real logging constant;
+    # fall back to INFO if the environment variable contains an invalid name.
+    if not hasattr(logging, log_level_str):
+        log_level_str = "INFO"
 
     # Attempt to load logging.conf file (highest priority)
-    logging_conf_path: str = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-        "logging.conf",
+    project_root: str = os.path.dirname(
+        os.path.dirname(os.path.dirname(__file__))
     )
+    logging_conf_path: str = os.path.join(project_root, "logging.conf")
     if os.path.exists(logging_conf_path):
         try:
+            # Ensure the logs/ directory exists for file handlers referenced
+            # in logging.conf (logs/nexus.log, logs/audit.log, logs/error.log).
+            # Without this, RotatingFileHandler initialization fails with
+            # [Errno 2] No such file or directory.
+            logs_dir: str = os.path.join(project_root, "logs")
+            os.makedirs(logs_dir, exist_ok=True)
+
             logging.config.fileConfig(
                 logging_conf_path,
                 disable_existing_loggers=False,
@@ -923,6 +933,13 @@ def create_app(config_name: str | None = None) -> Flask:
     # ------------------------------------------------------------------ #
     app: Flask = Flask(__name__)
 
+    # Disable strict trailing-slash enforcement globally so that routes
+    # like /api/v1/system/config respond identically to requests with or
+    # without a trailing slash (/api/v1/system/config/).  This prevents
+    # inconsistent 404s across endpoints and matches the behaviour of
+    # RESTEasy 6.2.7 from the Java source system.
+    app.url_map.strict_slashes = False
+
     # ------------------------------------------------------------------ #
     # Step 3: Load configuration
     # ------------------------------------------------------------------ #
@@ -952,6 +969,27 @@ def create_app(config_name: str | None = None) -> Flask:
     # Step 8: Register request lifecycle hooks (auth, headers, teardown)
     # ------------------------------------------------------------------ #
     _register_request_hooks(app)
+
+    # ------------------------------------------------------------------ #
+    # Step 8b: Initialize the multi-realm authentication chain
+    # (replaces Apache Shiro 2.0.0 FirstSuccessfulModularRealmAuthenticator)
+    # ------------------------------------------------------------------ #
+    # MUST be called after request hooks are registered (step 8) and
+    # before database initialization (step 10) so that:
+    #  - Flask-HTTPAuth callbacks (basic_auth, token_auth) are wired
+    #  - app.extensions['auth_chain'] is set for authenticate_request()
+    #  - All authenticated endpoints accept valid credentials
+    try:
+        from src.app.auth.authentication import AuthenticationChain
+
+        auth_chain = AuthenticationChain()
+        auth_chain.init_app(app)
+        logger.info("Authentication chain initialized successfully")
+    except Exception:
+        logger.exception(
+            "CRITICAL: Failed to initialize authentication chain — "
+            "all authenticated endpoints will return 401"
+        )
 
     # ------------------------------------------------------------------ #
     # Step 9: Initialize event system (replaces Guava EventBus)
