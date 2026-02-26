@@ -678,11 +678,19 @@ def _init_event_system(app: Flask) -> None:
     from src.app.webhooks.dispatcher import WebhookDispatcher
 
     # Step 1: Register all built-in event subscribers
+    # CRITICAL: The return value (dict of subscriber instances) MUST be stored
+    # on the app to keep strong references alive.  Blinker's signal.connect()
+    # defaults to weak=True, meaning bound methods on temporary objects are
+    # garbage-collected immediately if no strong reference is held.  Without
+    # storing the instances, the AuditLogSubscriber (F-303) and other
+    # subscribers are destroyed, and events are silently dropped.
     try:
-        register_all_subscribers()
+        subscribers = register_all_subscribers()
+        app.extensions["event_subscribers"] = subscribers
         logger.info(
-            "Built-in event subscribers registered "
-            "(audit, metrics, cache, cleanup)"
+            "Built-in event subscribers registered and stored "
+            "(audit, metrics, cache, cleanup) — %d subscribers",
+            len(subscribers),
         )
     except Exception:
         logger.exception("Failed to register event subscribers")

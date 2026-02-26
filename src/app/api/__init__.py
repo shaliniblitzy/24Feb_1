@@ -2,7 +2,7 @@
 API Blueprint Registration and OpenAPI/Swagger Setup.
 
 This is the foundational ``__init__`` module for the ``src.app.api`` package.
-It imports all 15 Flask-smorest Blueprint instances from their respective
+It imports all 16 Flask-smorest Blueprint instances from their respective
 sub-modules and provides a :func:`register_api_blueprints` function that is
 called by ``src/app/factory.py`` during application creation.
 
@@ -70,10 +70,11 @@ Blueprints are registered in a deliberate order:
 | cleanup_bp       | /api/v1/cleanup-policies          |
 | scripts_bp       | /api/v1/scripts                   |
 | webhooks_bp      | /api/v1/webhooks                  |
+| plugins_bp       | /api/v1/plugins                   |
 +------------------+-----------------------------------+
 
 Exports:
-    register_api_blueprints : Registers all 15 API blueprints with a
+    register_api_blueprints : Registers all 16 API blueprints with a
         flask-smorest Api instance.
     ALL_BLUEPRINTS : Ordered list of all blueprint instances.
     repositories_bp : Repository CRUD blueprint (F-501-RQ-001).
@@ -90,6 +91,7 @@ Exports:
     cleanup_bp : Cleanup policy management blueprint (F-204).
     scripts_bp : Script management blueprint (F-502).
     webhooks_bp : Webhook integration blueprint (F-503).
+    plugins_bp : Plugin management blueprint (F-504).
     health_bp : Health check and monitoring blueprint (F-401).
 """
 
@@ -114,13 +116,13 @@ if TYPE_CHECKING:
     from flask_smorest import Api
 
 # ---------------------------------------------------------------------------
-# Internal Imports — All 15 API Blueprints
+# Internal Imports — All 16 API Blueprints
 # ---------------------------------------------------------------------------
 # Each sub-module exports exactly one flask-smorest Blueprint instance.
 # The import order follows the logical registration order defined in the
 # ALL_BLUEPRINTS list below.
 #
-# CRITICAL: ALL 15 imports MUST be present.  Missing any import will result
+# CRITICAL: ALL 16 imports MUST be present.  Missing any import will result
 # in an unregistered API surface and broken endpoint routes.
 # ---------------------------------------------------------------------------
 
@@ -147,9 +149,10 @@ from src.app.api.system import system_bp
 from src.app.api.blobstores import blobstores_bp
 from src.app.api.cleanup import cleanup_bp
 
-# Integration and extensibility (F-502, F-503)
+# Integration and extensibility (F-502, F-503, F-504)
 from src.app.api.scripts import scripts_bp
 from src.app.api.webhooks import webhooks_bp
+from src.app.api.plugins import plugins_bp
 
 # ---------------------------------------------------------------------------
 # Module-Level Logger
@@ -205,6 +208,7 @@ ALL_BLUEPRINTS: List = [
     # ── Integration and Extensibility ─────────────────────────────────
     scripts_bp,         # F-502: Script CRUD and sandboxed execution
     webhooks_bp,        # F-503: Webhook configuration and delivery history
+    plugins_bp,         # F-504: Plugin listing and extension point discovery
 ]
 
 # ---------------------------------------------------------------------------
@@ -296,7 +300,7 @@ def register_api_blueprints(api: "Api") -> None:
 #   from src.app.api import ALL_BLUEPRINTS
 #   from src.app.api import health_bp, repositories_bp, ...
 #
-# 17 exports total:  1 function + 1 constant + 15 blueprint instances.
+# 18 exports total:  1 function + 1 constant + 16 blueprint instances.
 # ---------------------------------------------------------------------------
 
 __all__: List[str] = [
@@ -312,6 +316,7 @@ __all__: List[str] = [
     "cleanup_bp",
     "components_bp",
     "health_bp",
+    "plugins_bp",
     "privileges_bp",
     "repositories_bp",
     "roles_bp",

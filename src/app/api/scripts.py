@@ -55,13 +55,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from flask import current_app, jsonify, request
+from flask import current_app, jsonify
 from flask_smorest import Blueprint, abort
 from marshmallow import Schema, fields, validate
+from werkzeug.exceptions import HTTPException
 
 from src.app.auth.authentication import login_required
 from src.app.auth.authorization import require_permission
-from src.app.extensions import db
 from src.app.services.script_service import (
     ScriptError,
     ScriptExecutionError,
@@ -387,6 +387,8 @@ def list_scripts() -> Any:
         logger.info("Listed %d script(s).", len(scripts))
         return jsonify(scripts), 200
 
+    except HTTPException:
+        raise
     except ScriptError as exc:
         logger.error("Failed to list scripts: %s", exc.message)
         abort(500, message=f"Failed to list scripts: {exc.message}")
@@ -436,6 +438,11 @@ def get_script(script_name: str) -> Any:
         logger.info("Retrieved script '%s'.", script_name)
         return jsonify(script_data), 200
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (404, 403, etc.) so Flask handles them
+        # correctly.  Without this, abort(404) would be caught by the
+        # generic ``except Exception`` below and masked as a 500.
+        raise
     except ScriptError as exc:
         logger.error(
             "Failed to retrieve script '%s': %s",
@@ -460,7 +467,7 @@ def get_script(script_name: str) -> Any:
 @scripts_bp.route("", methods=["POST"])
 @scripts_bp.route("/", methods=["POST"])
 @scripts_bp.arguments(ScriptCreateSchema, location="json")
-@scripts_bp.response(204, description="Script created successfully")
+@scripts_bp.response(201, description="Script created successfully")
 @login_required
 @require_permission("scripts", "create")
 def create_script(json_data: Dict[str, Any]) -> Any:
@@ -478,7 +485,7 @@ def create_script(json_data: Dict[str, Any]) -> Any:
         content (str): Python source code.
 
     HTTP Status Codes:
-        204: Script created successfully.
+        201: Script created successfully (returns created script object).
         400: Invalid request body (missing fields or validation failure).
         401: Authentication required.
         403: Insufficient privileges.
@@ -486,7 +493,7 @@ def create_script(json_data: Dict[str, Any]) -> Any:
         500: Internal server error.
 
     Returns:
-        Empty response with 204 status on success.
+        JSON object with the created script details and 201 status.
     """
     script_name: str = json_data.get("name", "")
     script_type: str = json_data.get("type", "python")
@@ -507,9 +514,23 @@ def create_script(json_data: Dict[str, Any]) -> Any:
             content=script_content,
         )
 
-        logger.info("Script '%s' created successfully.", script_name)
-        return "", 204
+        # Retrieve the created script to return it in the response body.
+        # Clients need confirmation of the persisted state without making
+        # a separate GET request (AAP F-502 compliance).
+        created_script: Optional[Dict[str, Any]] = svc.get_script(script_name)
+        if created_script is None:
+            # Fallback: construct response from input data if retrieval fails
+            created_script = {
+                "name": script_name,
+                "type": script_type,
+                "content": script_content,
+            }
 
+        logger.info("Script '%s' created successfully.", script_name)
+        return jsonify(created_script), 201
+
+    except HTTPException:
+        raise
     except ScriptValidationError as exc:
         logger.warning(
             "Script '%s' creation failed validation: %s",
@@ -547,7 +568,7 @@ def create_script(json_data: Dict[str, Any]) -> Any:
 
 @scripts_bp.route("/<string:script_name>", methods=["PUT"])
 @scripts_bp.arguments(ScriptUpdateSchema, location="json")
-@scripts_bp.response(204, description="Script updated successfully")
+@scripts_bp.response(200, description="Script updated successfully")
 @login_required
 @require_permission("scripts", "create")
 def update_script(json_data: Dict[str, Any], script_name: str) -> Any:
@@ -567,7 +588,7 @@ def update_script(json_data: Dict[str, Any], script_name: str) -> Any:
         type (str, optional): New script type label.
 
     HTTP Status Codes:
-        204: Script updated successfully.
+        200: Script updated successfully (returns updated script object).
         400: Invalid content or validation failure.
         401: Authentication required.
         403: Insufficient privileges.
@@ -575,7 +596,7 @@ def update_script(json_data: Dict[str, Any], script_name: str) -> Any:
         500: Internal server error.
 
     Returns:
-        Empty response with 204 status on success.
+        JSON object with the updated script details and 200 status.
     """
     new_content: str = json_data.get("content", "")
 
@@ -589,9 +610,22 @@ def update_script(json_data: Dict[str, Any], script_name: str) -> Any:
         svc: ScriptService = _get_script_service()
         svc.update_script(name=script_name, content=new_content)
 
-        logger.info("Script '%s' updated successfully.", script_name)
-        return "", 204
+        # Retrieve the updated script to return it in the response body.
+        # Clients need confirmation of the persisted state without making
+        # a separate GET request (AAP F-502 compliance).
+        updated_script: Optional[Dict[str, Any]] = svc.get_script(script_name)
+        if updated_script is None:
+            # Fallback: construct response from known data if retrieval fails
+            updated_script = {
+                "name": script_name,
+                "content": new_content,
+            }
 
+        logger.info("Script '%s' updated successfully.", script_name)
+        return jsonify(updated_script), 200
+
+    except HTTPException:
+        raise
     except ScriptValidationError as exc:
         logger.warning(
             "Script '%s' update failed validation: %s",
@@ -659,6 +693,8 @@ def delete_script(script_name: str) -> Any:
         logger.info("Script '%s' deleted successfully.", script_name)
         return "", 204
 
+    except HTTPException:
+        raise
     except ScriptError as exc:
         logger.error(
             "Failed to delete script '%s': %s",
@@ -815,6 +851,8 @@ def execute_script(json_data: Optional[Dict[str, Any]], script_name: str) -> Any
             exc.message,
         )
         abort(500, message=f"Script error: {exc.message}")
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception(
             "Unexpected error executing script '%s': %s",
