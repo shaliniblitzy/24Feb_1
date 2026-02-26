@@ -1,20 +1,17 @@
 """
-Docker Registry API V2 Format Handler Sub-Package.
+Docker format handler sub-package for Nexus Repository.
 
-Implements the Docker container image repository format (F-101-RQ-005) for
-the Nexus Repository Flask application.  Supports the full Docker Registry
-HTTP API V2 specification including:
+Implements the Docker Registry HTTP API V2 for container image management,
+supporting manifest operations, blob (layer) operations, chunked uploads,
+tag listing, and catalog endpoints.
 
-- Manifest operations (push, pull, delete by tag or digest)
-- Blob (layer) operations with chunked upload support
-- Cross-repository blob mounting
-- Tag listing and repository catalog
-- Docker token authentication challenge (``WWW-Authenticate`` header)
-- Content-addressable storage via SHA-256 digests
-- Docker-Distribution-Api-Version header on all responses
+Supports Docker V2 Schema 2 and OCI Image Manifest formats.
+
+Feature: F-101-RQ-005
 
 **Replaces:** The Docker format bundle OSGi plugin from the original
-Sonatype Nexus Repository Java source system.
+Sonatype Nexus Repository Java source system (OSGi/Karaf 4.4.4 module
+container).
 
 **Protocol Endpoints (15+):**
 
@@ -33,11 +30,30 @@ Sonatype Nexus Repository Java source system.
 - ``GET  /v2/_catalog``                      — Repository catalog
 
 Exports:
-    docker_v2_bp : Flask Blueprint containing all Docker V2 route handlers.
+    DockerFormatHandler: The format handler class for Docker container images.
+        Extends FormatHandler base class with Docker-specific coordinate
+        extraction, manifest validation, and metadata generation.
+    docker_v2_bp: Flask Blueprint containing all Docker V2 route handlers.
+    MANIFEST_V2_TYPE: Docker V2 Schema 2 manifest media type constant
+        (``'application/vnd.docker.distribution.manifest.v2+json'``).
+    OCI_MANIFEST_TYPE: OCI Image Manifest media type constant
+        (``'application/vnd.oci.image.manifest.v1+json'``).
+    DOCKER_REGISTRY_VERSION: Docker Registry API version string
+        (``'registry/2.0'``).
 """
 
-from src.app.formats.docker.registry_v2 import docker_v2_bp
+from src.app.formats.docker.handler import DockerFormatHandler
+from src.app.formats.docker.registry_v2 import (
+    docker_v2_bp,
+    MANIFEST_V2_TYPE,
+    OCI_MANIFEST_TYPE,
+    DOCKER_REGISTRY_VERSION,
+)
 
 __all__: list[str] = [
+    "DockerFormatHandler",
     "docker_v2_bp",
+    "MANIFEST_V2_TYPE",
+    "OCI_MANIFEST_TYPE",
+    "DOCKER_REGISTRY_VERSION",
 ]
