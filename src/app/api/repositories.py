@@ -328,10 +328,10 @@ def get_repository(repository_name: str) -> Repository:
 
 
 @repositories_bp.route("/", methods=["POST"])
-@repositories_bp.arguments(RepositoryCreateSchema, location="json")
-@repositories_bp.response(201, RepositoryResponseSchema)
 @login_required
 @require_permission("repositories", "create")
+@repositories_bp.arguments(RepositoryCreateSchema, location="json")
+@repositories_bp.response(201, RepositoryResponseSchema)
 def create_repository(args: Dict[str, Any]) -> Repository:
     """Create a new repository.
 
@@ -445,10 +445,10 @@ def create_repository(args: Dict[str, Any]) -> Repository:
 
 
 @repositories_bp.route("/<string:repository_name>", methods=["PUT"])
-@repositories_bp.arguments(RepositoryUpdateSchema, location="json")
-@repositories_bp.response(200, RepositoryResponseSchema)
 @login_required
 @require_repository_permission("edit")
+@repositories_bp.arguments(RepositoryUpdateSchema, location="json")
+@repositories_bp.response(200, RepositoryResponseSchema)
 def update_repository(
     args: Dict[str, Any], repository_name: str
 ) -> Repository:
@@ -607,10 +607,10 @@ def delete_repository(repository_name: str) -> None:
 
 
 @repositories_bp.route("/<string:repository_name>/status", methods=["PUT"])
-@repositories_bp.arguments(RepositoryStatusSchema)
-@repositories_bp.response(200, RepositoryResponseSchema)
 @login_required
 @require_repository_permission("admin")
+@repositories_bp.arguments(RepositoryStatusSchema)
+@repositories_bp.response(200, RepositoryResponseSchema)
 def set_repository_status(payload: dict, repository_name: str) -> Repository:
     """Set a repository's online/offline status.
 

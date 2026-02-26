@@ -595,10 +595,10 @@ def list_trusted_certificates() -> Dict[str, Any]:
 
 
 @security_bp.route("/truststore", methods=["POST"])
-@security_bp.arguments(CertificateUploadSchema, location="json")
-@security_bp.response(201, CertificateResponseSchema)
 @login_required
 @require_permission("ssl", "create")
+@security_bp.arguments(CertificateUploadSchema, location="json")
+@security_bp.response(201, CertificateResponseSchema)
 def import_trusted_certificate(upload_data: Dict[str, Any]) -> Any:
     """Import a PEM-encoded X.509 certificate into the trust store.
 
@@ -881,9 +881,9 @@ def retrieve_remote_certificate(
 
 
 @security_bp.route("/ldap", methods=["PUT"])
-@security_bp.arguments(LDAPSSLSettingsSchema, location="json")
 @login_required
 @require_permission("ssl", "update")
+@security_bp.arguments(LDAPSSLSettingsSchema, location="json")
 def update_ldap_ssl_settings(
     settings_data: Dict[str, Any],
 ) -> Dict[str, Any]:

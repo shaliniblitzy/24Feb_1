@@ -311,9 +311,18 @@ class DefaultConfig:
     # ======================================================================
 
     # Allowed origins for Cross-Origin Resource Sharing.
-    # Use "*" for permissive development, or a comma-separated list of
-    # specific origins for production.
-    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "*")
+    # SECURITY: The default restricts CORS to same-origin requests only
+    # (empty list means no cross-origin requests are allowed).
+    # Set the CORS_ORIGINS environment variable to a comma-separated list
+    # of trusted frontend origins in production (e.g.
+    # "https://nexus.example.com,https://admin.example.com").
+    # Flask-CORS requires a list of strings — the env var is parsed
+    # from a comma-separated string into a list below.
+    CORS_ORIGINS: list = [
+        origin.strip()
+        for origin in os.getenv("CORS_ORIGINS", "").split(",")
+        if origin.strip()
+    ]
 
     # ======================================================================
     # 14. SSL / TLS Configuration  (F-302)

@@ -120,9 +120,20 @@ class DevelopmentConfig(DefaultConfig):
     # 7. CORS — Permissive for Frontend Development
     # ==================================================================
 
-    # Allow all origins so that a locally running frontend (e.g. on a
-    # different port) can communicate with the API without restrictions.
-    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "*")
+    # Allow common local frontend origins in development so that a
+    # locally running frontend (e.g. React on port 3000, Vue on port
+    # 8080) can communicate with the API without CORS errors.
+    # In production, CORS_ORIGINS defaults to an empty list (same-origin
+    # only) via DefaultConfig.
+    # WARNING: Do NOT use "*" in production — set specific allowed origins
+    # via the CORS_ORIGINS environment variable instead.
+    CORS_ORIGINS: list = [
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
+        ).split(",")
+        if origin.strip()
+    ]
 
     # ==================================================================
     # 8. API Documentation — Enabled

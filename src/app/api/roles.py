@@ -378,10 +378,10 @@ def get_role(role_id: str) -> Role:
 
 
 @roles_bp.route("/", methods=["POST"])
-@roles_bp.arguments(RoleCreateSchema)
-@roles_bp.response(201, RoleSchema)
 @login_required
 @require_permission("roles", "create")
+@roles_bp.arguments(RoleCreateSchema)
+@roles_bp.response(201, RoleSchema)
 def create_role(role_data: dict) -> Role:
     """Create a new security role.
 
@@ -497,10 +497,10 @@ def create_role(role_data: dict) -> Role:
 
 
 @roles_bp.route("/<string:role_id>", methods=["PUT"])
-@roles_bp.arguments(RoleUpdateSchema)
-@roles_bp.response(200, RoleSchema)
 @login_required
 @require_permission("roles", "update")
+@roles_bp.arguments(RoleUpdateSchema)
+@roles_bp.response(200, RoleSchema)
 def update_role(role_data: dict, role_id: str) -> Role:
     """Update an existing security role with partial update support.
 

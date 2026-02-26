@@ -63,6 +63,9 @@ from __future__ import annotations
 
 import base64
 import logging
+import threading
+import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
@@ -133,6 +136,137 @@ _FULL_REALM_ORDER: List[str] = [
     "sso",
 ]
 """Complete realm order including optional enterprise realms."""
+
+# ---------------------------------------------------------------------------
+# Rate Limiting Constants
+# ---------------------------------------------------------------------------
+
+_DEFAULT_RATE_LIMIT_MAX_ATTEMPTS: int = 10
+"""Maximum authentication attempts per IP within the rate-limit window."""
+
+_DEFAULT_RATE_LIMIT_WINDOW_SECONDS: int = 60
+"""Sliding window duration in seconds for counting auth attempts."""
+
+
+# ===========================================================================
+# AuthenticationRateLimiter — In-Memory Token-Bucket Rate Limiter
+# ===========================================================================
+
+
+class AuthenticationRateLimiter:
+    """Thread-safe in-memory rate limiter for authentication endpoints.
+
+    Tracks failed authentication attempts per client IP address using a
+    sliding-window counter.  When the configured threshold is exceeded
+    within the time window, subsequent requests from that IP receive
+    HTTP 429 Too Many Requests *before* any credential verification is
+    performed.
+
+    This mitigates brute-force attacks by providing explicit backoff
+    signals (HTTP 429) to automated tools, complementing the per-account
+    lockout mechanism in :class:`LocalRealm`.
+
+    **Thread Safety:**
+    All mutable state is protected by a :class:`threading.Lock` to support
+    concurrent Gunicorn worker threads safely.
+
+    Configuration Keys (read from ``app.config`` at check time):
+        ``RATE_LIMIT_MAX_ATTEMPTS`` (int): Max attempts per window (default 10).
+        ``RATE_LIMIT_WINDOW_SECONDS`` (int): Window size in seconds (default 60).
+    """
+
+    def __init__(self) -> None:
+        """Initialize the rate limiter with an empty attempt registry."""
+        self._attempts: Dict[str, List[float]] = defaultdict(list)
+        self._lock: threading.Lock = threading.Lock()
+
+    def is_rate_limited(self, client_ip: str) -> bool:
+        """Check whether *client_ip* has exceeded the rate limit.
+
+        Cleans up expired entries and counts recent attempts within the
+        configured sliding window.
+
+        Args:
+            client_ip: The client's IP address (from ``request.remote_addr``).
+
+        Returns:
+            ``True`` if the IP has exceeded the maximum allowed attempts
+            within the current window; ``False`` otherwise.
+        """
+        max_attempts: int = _DEFAULT_RATE_LIMIT_MAX_ATTEMPTS
+        window: int = _DEFAULT_RATE_LIMIT_WINDOW_SECONDS
+        try:
+            max_attempts = current_app.config.get(
+                "RATE_LIMIT_MAX_ATTEMPTS", _DEFAULT_RATE_LIMIT_MAX_ATTEMPTS
+            )
+            window = current_app.config.get(
+                "RATE_LIMIT_WINDOW_SECONDS", _DEFAULT_RATE_LIMIT_WINDOW_SECONDS
+            )
+        except RuntimeError:
+            pass  # Outside app context — use defaults
+
+        now: float = time.monotonic()
+        cutoff: float = now - window
+
+        with self._lock:
+            # Prune expired timestamps
+            timestamps = self._attempts[client_ip]
+            self._attempts[client_ip] = [
+                ts for ts in timestamps if ts > cutoff
+            ]
+            return len(self._attempts[client_ip]) >= max_attempts
+
+    def record_attempt(self, client_ip: str) -> None:
+        """Record a failed authentication attempt for *client_ip*.
+
+        Args:
+            client_ip: The client's IP address.
+        """
+        now: float = time.monotonic()
+        with self._lock:
+            self._attempts[client_ip].append(now)
+
+    def reset(self, client_ip: str) -> None:
+        """Reset the attempt counter for *client_ip* (e.g. on success).
+
+        Args:
+            client_ip: The client's IP address.
+        """
+        with self._lock:
+            self._attempts.pop(client_ip, None)
+
+    def cleanup(self) -> None:
+        """Remove all expired entries from the internal registry.
+
+        Intended for periodic maintenance to prevent unbounded memory
+        growth in long-running processes.
+        """
+        window: int = _DEFAULT_RATE_LIMIT_WINDOW_SECONDS
+        try:
+            window = current_app.config.get(
+                "RATE_LIMIT_WINDOW_SECONDS", _DEFAULT_RATE_LIMIT_WINDOW_SECONDS
+            )
+        except RuntimeError:
+            pass
+
+        now: float = time.monotonic()
+        cutoff: float = now - window
+
+        with self._lock:
+            empty_keys: List[str] = []
+            for ip, timestamps in self._attempts.items():
+                self._attempts[ip] = [
+                    ts for ts in timestamps if ts > cutoff
+                ]
+                if not self._attempts[ip]:
+                    empty_keys.append(ip)
+            for ip in empty_keys:
+                del self._attempts[ip]
+
+
+# Module-level singleton rate limiter instance.
+# Shared across all requests within the same Gunicorn worker process.
+_rate_limiter: AuthenticationRateLimiter = AuthenticationRateLimiter()
 
 
 # ===========================================================================
@@ -1020,6 +1154,14 @@ def login_required(f: Any) -> Any:
     authenticated :class:`User` is stored in ``g.current_user`` for use
     by the decorated view function.
 
+    **Rate Limiting:**
+    Before performing any credential verification, checks the per-IP
+    rate limiter.  If the client IP has exceeded the configured threshold
+    of failed authentication attempts within the sliding window, the
+    request is immediately aborted with HTTP 429 Too Many Requests.
+    This provides explicit backoff signals to automated brute-force tools,
+    complementing the per-account lockout mechanism in :class:`LocalRealm`.
+
     Usage::
 
         @app.route('/api/protected')
@@ -1037,9 +1179,43 @@ def login_required(f: Any) -> Any:
 
     @wraps(f)
     def decorated_function(*args: Any, **kwargs: Any) -> Any:
-        result: AuthenticationResult = authenticate_request()
+        client_ip: str = request.remote_addr or "unknown"
+
+        # Rate limiting check — abort with 429 if threshold exceeded
+        if _rate_limiter.is_rate_limited(client_ip):
+            logger.warning(
+                "Rate limit exceeded for IP '%s' on %s %s",
+                client_ip,
+                request.method,
+                request.path,
+            )
+            abort(
+                429,
+                description="Too Many Requests — rate limit exceeded",
+            )
+
+        # Reuse the authentication result cached by
+        # ``before_request_auth()`` in ``factory.py`` to avoid double
+        # bcrypt computation per request.  Running the full realm chain
+        # twice causes timing side-channel leakage: the first call may
+        # trigger account lockout for valid users, making the second
+        # call skip bcrypt (fast), while non-existent users always run
+        # two full dummy bcrypt calls (slow).
+        cached_result: Optional[AuthenticationResult] = getattr(
+            g, "_auth_result", None
+        )
+        if cached_result is not None:
+            result = cached_result
+        else:
+            result = authenticate_request()
+
         if not result.authenticated:
+            # Record the failed attempt for rate limiting
+            _rate_limiter.record_attempt(client_ip)
             abort(401, description=result.error_message or "Authentication required")
+
+        # Successful authentication — reset rate limiter for this IP
+        _rate_limiter.reset(client_ip)
         g.current_user = result.user
         return f(*args, **kwargs)
 
@@ -1063,6 +1239,7 @@ def get_current_user() -> Optional[User]:
 __all__: list[str] = [
     "authenticate_request",
     "AuthenticationChain",
+    "AuthenticationRateLimiter",
     "login_required",
     "get_current_user",
     "AuthenticationResult",

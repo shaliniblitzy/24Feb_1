@@ -574,7 +574,7 @@ def _register_request_hooks(app: Flask) -> None:
 
         This replaces ``NexusAuthenticationFilter`` from Apache Shiro 2.0.0.
         """
-        from flask import request
+        from flask import g, request
 
         # Skip authentication for public endpoints
         skip_prefixes = (
@@ -590,12 +590,19 @@ def _register_request_hooks(app: Flask) -> None:
         if any(request.path.startswith(prefix) for prefix in skip_prefixes):
             return None
 
-        # Delegate to the multi-realm authentication chain
+        # Delegate to the multi-realm authentication chain and cache
+        # the result in ``g`` so that downstream ``@login_required``
+        # decorators can reuse it instead of re-authenticating.  This
+        # eliminates double bcrypt computation per request and prevents
+        # timing side-channel leakage caused by account-lockout skipping
+        # bcrypt on the second pass for valid-but-locked users.
         try:
             from src.app.auth.authentication import authenticate_request
-
-            authenticate_request()
-        except Exception:
+            result = authenticate_request()
+            g._auth_result = result  # type: ignore[attr-defined]
+            if result.authenticated and result.user is not None:
+                g.current_user = result.user
+        except Exception as _exc:
             logger.debug(
                 "Authentication skipped or failed for %s %s",
                 request.method,
@@ -633,8 +640,11 @@ def _register_request_hooks(app: Flask) -> None:
             "Content-Security-Policy", "default-src 'self'"
         )
 
-        # Server identification
-        response.headers["Server"] = "Nexus-Repository/1.0.0"
+        # Server identification is handled by the _ServerHeaderMiddleware
+        # and the Werkzeug WSGIRequestHandler monkey-patch (see Step 13),
+        # which together ensure that only "Nexus-Repository" appears in
+        # the Server header regardless of HTTP server (CWE-200 mitigation).
+        # Setting it here would create duplicate headers with the dev server.
 
         return response
 
@@ -910,6 +920,55 @@ def _init_monitoring(app: Flask) -> None:
 
 
 # ============================================================================
+# WSGI Middleware — Server Header Sanitization
+# ============================================================================
+
+
+class _ServerHeaderMiddleware:
+    """WSGI middleware that strips ``Server`` headers from WSGI responses.
+
+    HTTP servers (Werkzeug dev server, Gunicorn, uWSGI) add their own
+    ``Server`` header at the HTTP transport layer — **outside** of the
+    WSGI ``start_response`` flow.  If Flask's ``after_request`` handler
+    *also* sets a ``Server`` header, the result is duplicate headers.
+
+    This middleware strips any ``Server`` headers that Flask or other
+    WSGI components add to the response, preventing duplicates.  The
+    actual ``Server`` header seen by the client comes from:
+
+    - **Development server**: ``WSGIRequestHandler.version_string()``
+      (monkey-patched to ``"Nexus-Repository"`` in Step 13).
+    - **Gunicorn**: ``server_software`` setting in ``gunicorn.conf.py``
+      (set to ``"Nexus-Repository"``).
+
+    This separation ensures exactly **one** ``Server`` header with no
+    framework or runtime version disclosure (CWE-200 mitigation).
+    """
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    def __call__(self, environ: dict, start_response: Any) -> Any:
+        """Intercept ``start_response`` to strip WSGI-level Server headers."""
+
+        def _custom_start_response(
+            status: str,
+            response_headers: list,
+            exc_info: Any = None,
+        ) -> Any:
+            # Strip all Server headers from the WSGI response — the HTTP
+            # transport layer will add exactly one via its own mechanism.
+            sanitised_headers = [
+                (name, value)
+                for name, value in response_headers
+                if name.lower() != "server"
+            ]
+            return start_response(status, sanitised_headers, exc_info)
+
+        return self._app(environ, _custom_start_response)
+
+
+# ============================================================================
 # Application Factory — Public API
 # ============================================================================
 
@@ -1061,6 +1120,34 @@ def create_app(config_name: str | None = None) -> Flask:
     # Step 12: Initialize monitoring (health checks, Prometheus)
     # ------------------------------------------------------------------ #
     _init_monitoring(app)
+
+    # ------------------------------------------------------------------ #
+    # Step 13: Apply WSGI middleware for Server header sanitization
+    # ------------------------------------------------------------------ #
+    # Werkzeug's development server injects its own ``Server`` header at
+    # the HTTP transport layer (via ``BaseHTTPRequestHandler``), which is
+    # outside the WSGI start_response flow.  We apply TWO mitigations:
+    #
+    # 1. WSGI middleware: intercepts start_response to strip/replace
+    #    any Server headers set by the WSGI stack (Flask/after_request).
+    # 2. Monkey-patch ``WSGIRequestHandler.version_string()``: overrides
+    #    the HTTP-level Server header that Werkzeug's dev server adds
+    #    independently of WSGI.  In production (Gunicorn), this class is
+    #    never used, so the patch is a no-op.
+    #
+    # Together, they ensure the Server header is always "Nexus-Repository"
+    # regardless of which HTTP server is in use (CWE-200 mitigation).
+    app.wsgi_app = _ServerHeaderMiddleware(app.wsgi_app)
+
+    # Monkey-patch the Werkzeug dev server to suppress version disclosure.
+    try:
+        from werkzeug.serving import WSGIRequestHandler  # type: ignore[attr-defined]
+
+        WSGIRequestHandler.version_string = (  # type: ignore[assignment]
+            lambda self: "Nexus-Repository"
+        )
+    except ImportError:
+        pass  # Werkzeug serving module not available (production)
 
     # ------------------------------------------------------------------ #
     # Startup Complete

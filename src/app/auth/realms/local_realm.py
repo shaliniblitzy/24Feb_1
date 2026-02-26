@@ -137,6 +137,16 @@ class LocalRealm(RealmBase):
     ``AUTH_LOCKOUT_DURATION_MINUTES``.
     """
 
+    # Pre-computed bcrypt hash used for constant-time dummy verification
+    # when a looked-up user does not exist.  This prevents username
+    # enumeration via timing side-channel: the bcrypt work factor is
+    # executed regardless of whether the username is valid, so both
+    # code paths consume comparable CPU time (~300 ms at cost 12).
+    # The actual hash value is irrelevant — verification will always fail.
+    _DUMMY_HASH: str = (
+        "$2b$12$LJ3m4ys3Lg7Eqp2OKl5k2OivlE2I8A2YhKz6kluyYW4jZqBMGWEBi"
+    )
+
     # ------------------------------------------------------------------
     # Constructor
     # ------------------------------------------------------------------
@@ -201,11 +211,21 @@ class LocalRealm(RealmBase):
         user: Optional[User] = User.query.filter_by(user_id=username).first()
 
         if user is None:
+            # SECURITY: Perform a dummy bcrypt comparison to equalize response
+            # times regardless of whether the user exists, preventing username
+            # enumeration via timing side-channel attacks.  The dummy hash is
+            # a pre-computed bcrypt hash that will always fail verification,
+            # but consumes comparable CPU time to a real bcrypt.checkpw() call.
+            self._perform_dummy_password_check(password)
             self.logger.debug("User not found: %s", username)
             return None
 
         # Step 2: Account status check — only 'active' users may log in
         if user.status != "active":
+            # SECURITY: Perform a dummy bcrypt comparison so that
+            # inactive accounts have the same response time as
+            # non-existent users, preventing user enumeration via timing.
+            self._perform_dummy_password_check(password)
             self.logger.warning(
                 "Login attempt for non-active user: %s (status=%s)",
                 username,
@@ -215,6 +235,12 @@ class LocalRealm(RealmBase):
 
         # Step 3: Account lockout check (with auto-unlock on expiry)
         if self._is_account_locked(user):
+            # SECURITY: Perform a dummy bcrypt comparison so that locked
+            # accounts have the same response time as non-existent users
+            # and unlocked users with wrong passwords.  Without this,
+            # attackers can distinguish locked (existing) accounts from
+            # non-existent accounts by measuring response time.
+            self._perform_dummy_password_check(password)
             self.logger.warning(
                 "Login attempt for locked account: %s",
                 username,
@@ -273,6 +299,34 @@ class LocalRealm(RealmBase):
             Always ``True``.
         """
         return True
+
+    # ==================================================================
+    # Timing-Safe Helpers (Private)
+    # ==================================================================
+
+    def _perform_dummy_password_check(self, password: str) -> None:
+        """Perform a dummy bcrypt verification to equalize response timing.
+
+        When a user lookup returns ``None`` (user does not exist), this
+        method runs a bcrypt hash comparison against a pre-computed dummy
+        hash.  The result is always ``False`` and is discarded — the sole
+        purpose is to consume comparable CPU time to a real password
+        verification so that an attacker cannot distinguish "user not
+        found" from "wrong password" via response-time measurement.
+
+        This mitigates CWE-208 (Observable Timing Discrepancy) and
+        prevents username enumeration attacks.
+
+        Args:
+            password: The plaintext password from the login attempt.
+                      Used only for the dummy comparison; never stored
+                      or logged.
+        """
+        try:
+            verify_password(password, self._DUMMY_HASH)
+        except Exception:
+            # Swallow any error — the goal is only to burn CPU time.
+            pass
 
     # ==================================================================
     # Account Lockout Management (Private)

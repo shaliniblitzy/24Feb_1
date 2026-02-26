@@ -738,10 +738,10 @@ def get_cleanup_policy(policy_id: str) -> Any:
 
 
 @cleanup_bp.route("/", methods=["POST"])
-@cleanup_bp.arguments(CleanupPolicyCreateSchema, location="json")
-@cleanup_bp.response(201, CleanupPolicyResponseSchema)
 @login_required
 @require_permission("cleanup", "create")
+@cleanup_bp.arguments(CleanupPolicyCreateSchema, location="json")
+@cleanup_bp.response(201, CleanupPolicyResponseSchema)
 def create_cleanup_policy(payload: Dict[str, Any]) -> Any:
     """Create a new cleanup policy.
 
@@ -841,10 +841,10 @@ def create_cleanup_policy(payload: Dict[str, Any]) -> Any:
 
 
 @cleanup_bp.route("/<string:policy_id>", methods=["PUT"])
-@cleanup_bp.arguments(CleanupPolicyUpdateSchema, location="json")
-@cleanup_bp.response(200, CleanupPolicyResponseSchema)
 @login_required
 @require_permission("cleanup", "update")
+@cleanup_bp.arguments(CleanupPolicyUpdateSchema, location="json")
+@cleanup_bp.response(200, CleanupPolicyResponseSchema)
 def update_cleanup_policy(payload: Dict[str, Any], policy_id: str) -> Any:
     """Update an existing cleanup policy.
 

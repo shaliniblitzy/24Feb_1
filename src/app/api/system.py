@@ -675,10 +675,10 @@ def get_config(key: str) -> Dict[str, Any]:
 
 
 @system_bp.route("/config/<key>", methods=["PUT"])
-@system_bp.arguments(SystemConfigUpdateSchema)
-@system_bp.response(200, SystemConfigSchema)
 @login_required
 @require_permission("settings", "update")
+@system_bp.arguments(SystemConfigUpdateSchema)
+@system_bp.response(200, SystemConfigSchema)
 def update_config(update_data: Dict[str, Any], key: str) -> Dict[str, Any]:
     """Create or update a system configuration value.
 
@@ -998,10 +998,10 @@ def get_license_info() -> Dict[str, Any]:
 
 
 @system_bp.route("/config/email/verify", methods=["POST"])
-@system_bp.arguments(EmailVerifyRequestSchema)
-@system_bp.response(200, EmailVerifyResponseSchema)
 @login_required
 @require_permission("settings", "update")
+@system_bp.arguments(EmailVerifyRequestSchema)
+@system_bp.response(200, EmailVerifyResponseSchema)
 def verify_email_config(
     verify_data: Dict[str, Any],
 ) -> Dict[str, Any]:

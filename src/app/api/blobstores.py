@@ -407,9 +407,9 @@ def get_blobstore(blob_store_name: str) -> tuple:
 
 
 @blobstores_bp.route("/", methods=["POST"])
-@blobstores_bp.arguments(BlobStoreCreateSchema)
 @login_required
 @require_permission("blobstores", "create")
+@blobstores_bp.arguments(BlobStoreCreateSchema)
 def create_blobstore(validated: Dict[str, Any]) -> tuple:
     """Create a new BlobStore configuration.
 
@@ -490,9 +490,9 @@ def create_blobstore(validated: Dict[str, Any]) -> tuple:
 
 
 @blobstores_bp.route("/<string:blob_store_name>", methods=["PUT"])
-@blobstores_bp.arguments(BlobStoreUpdateSchema)
 @login_required
 @require_permission("blobstores", "update")
+@blobstores_bp.arguments(BlobStoreUpdateSchema)
 def update_blobstore(validated: Dict[str, Any], blob_store_name: str) -> tuple:
     """Update the configuration of an existing BlobStore.
 
@@ -644,9 +644,9 @@ def delete_blobstore(blob_store_name: str) -> tuple:
 
 
 @blobstores_bp.route("/<string:blob_store_name>/quota", methods=["PUT"])
-@blobstores_bp.arguments(BlobStoreQuotaSchema)
 @login_required
 @require_permission("blobstores", "update")
+@blobstores_bp.arguments(BlobStoreQuotaSchema)
 def set_blobstore_quota(validated: Dict[str, Any], blob_store_name: str) -> tuple:
     """Set or update a storage quota (soft limit) for a BlobStore.
 

@@ -684,9 +684,9 @@ def list_webhooks() -> Any:
 
 
 @webhooks_bp.route("/", methods=["POST"])
-@webhooks_bp.arguments(WebhookCreateSchema)
 @login_required
 @require_permission("webhooks", "create")
+@webhooks_bp.arguments(WebhookCreateSchema)
 def create_webhook(data: Dict[str, Any]) -> Any:
     """Create a new webhook configuration.
 
@@ -812,9 +812,9 @@ def get_webhook(webhook_id: str) -> Any:
 
 
 @webhooks_bp.route("/<string:webhook_id>", methods=["PUT"])
-@webhooks_bp.arguments(WebhookUpdateSchema)
 @login_required
 @require_permission("webhooks", "update")
+@webhooks_bp.arguments(WebhookUpdateSchema)
 def update_webhook(data: Dict[str, Any], webhook_id: str) -> Any:
     """Update an existing webhook configuration.
 

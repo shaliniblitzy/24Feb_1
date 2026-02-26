@@ -567,10 +567,10 @@ def get_user(user_id: str) -> Dict[str, Any]:
 
 
 @users_bp.route("/", methods=["POST"])
-@users_bp.arguments(UserCreateSchema)
-@users_bp.response(201, UserResponseSchema)
 @login_required
 @require_permission("users", "create")
+@users_bp.arguments(UserCreateSchema)
+@users_bp.response(201, UserResponseSchema)
 def create_user(args: Dict[str, Any]) -> Dict[str, Any]:
     """Create a new user account.
 
@@ -677,10 +677,10 @@ def create_user(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @users_bp.route("/<string:user_id>", methods=["PUT"])
-@users_bp.arguments(UserUpdateSchema)
-@users_bp.response(200, UserResponseSchema)
 @login_required
 @require_permission("users", "update")
+@users_bp.arguments(UserUpdateSchema)
+@users_bp.response(200, UserResponseSchema)
 def update_user(args: Dict[str, Any], user_id: str) -> Dict[str, Any]:
     """Update an existing user account.
 
@@ -844,9 +844,9 @@ def delete_user(user_id: str) -> None:
 
 
 @users_bp.route("/<string:user_id>/change-password", methods=["PUT"])
+@login_required
 @users_bp.arguments(UserChangePasswordSchema)
 @users_bp.response(200)
-@login_required
 def change_password(args: Dict[str, Any], user_id: str) -> Dict[str, str]:
     """Change a user's password.
 

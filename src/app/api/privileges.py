@@ -685,10 +685,10 @@ def get_privilege(privilege_id: str) -> Privilege:
 
 
 @privileges_bp.route("/privileges", methods=["POST"])
-@privileges_bp.arguments(PrivilegeSchema)
-@privileges_bp.response(201, PrivilegeSchema)
 @login_required
 @require_permission("privileges", "create")
+@privileges_bp.arguments(PrivilegeSchema)
+@privileges_bp.response(201, PrivilegeSchema)
 def create_privilege(payload: Dict[str, Any]) -> Privilege:
     """Create a new privilege descriptor.
 
@@ -862,10 +862,10 @@ class PrivilegeUpdateSchema(Schema):
 @privileges_bp.route(
     "/privileges/<string:privilege_id>", methods=["PUT"]
 )
-@privileges_bp.arguments(PrivilegeUpdateSchema)
-@privileges_bp.response(200, PrivilegeSchema)
 @login_required
 @require_permission("privileges", "update")
+@privileges_bp.arguments(PrivilegeUpdateSchema)
+@privileges_bp.response(200, PrivilegeSchema)
 def update_privilege(
     payload: Dict[str, Any], privilege_id: str
 ) -> Privilege:
@@ -1133,10 +1133,10 @@ def list_content_selectors() -> List[ContentSelector]:
     methods=["POST"],
     endpoint="create_content_selector",
 )
-@privileges_bp.arguments(ContentSelectorCreateSchema)
-@privileges_bp.response(201, ContentSelectorSchema)
 @login_required
 @require_permission("privileges", "create")
+@privileges_bp.arguments(ContentSelectorCreateSchema)
+@privileges_bp.response(201, ContentSelectorSchema)
 def create_content_selector(
     payload: Dict[str, Any],
 ) -> ContentSelector:
@@ -1247,10 +1247,10 @@ def create_content_selector(
     methods=["PUT"],
     endpoint="update_content_selector",
 )
-@privileges_bp.arguments(ContentSelectorCreateSchema)
-@privileges_bp.response(200, ContentSelectorSchema)
 @login_required
 @require_permission("privileges", "update")
+@privileges_bp.arguments(ContentSelectorCreateSchema)
+@privileges_bp.response(200, ContentSelectorSchema)
 def update_content_selector(
     payload: Dict[str, Any], selector_id: str
 ) -> ContentSelector:

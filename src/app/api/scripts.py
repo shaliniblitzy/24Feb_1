@@ -466,10 +466,10 @@ def get_script(script_name: str) -> Any:
 
 @scripts_bp.route("", methods=["POST"])
 @scripts_bp.route("/", methods=["POST"])
-@scripts_bp.arguments(ScriptCreateSchema, location="json")
-@scripts_bp.response(201, description="Script created successfully")
 @login_required
 @require_permission("scripts", "create")
+@scripts_bp.arguments(ScriptCreateSchema, location="json")
+@scripts_bp.response(201, description="Script created successfully")
 def create_script(json_data: Dict[str, Any]) -> Any:
     """Create a new named script.
 
@@ -567,10 +567,10 @@ def create_script(json_data: Dict[str, Any]) -> Any:
 
 
 @scripts_bp.route("/<string:script_name>", methods=["PUT"])
-@scripts_bp.arguments(ScriptUpdateSchema, location="json")
-@scripts_bp.response(200, description="Script updated successfully")
 @login_required
 @require_permission("scripts", "create")
+@scripts_bp.arguments(ScriptUpdateSchema, location="json")
+@scripts_bp.response(200, description="Script updated successfully")
 def update_script(json_data: Dict[str, Any], script_name: str) -> Any:
     """Update the content of an existing script.
 
@@ -717,10 +717,10 @@ def delete_script(script_name: str) -> Any:
 
 
 @scripts_bp.route("/<string:script_name>/run", methods=["POST"])
-@scripts_bp.arguments(ScriptExecuteSchema, location="json", required=False)
-@scripts_bp.response(200, description="Script execution result")
 @login_required
 @require_permission("scripts", "run")
+@scripts_bp.arguments(ScriptExecuteSchema, location="json", required=False)
+@scripts_bp.response(200, description="Script execution result")
 def execute_script(json_data: Optional[Dict[str, Any]], script_name: str) -> Any:
     """Execute a stored script within a sandboxed environment.
 
