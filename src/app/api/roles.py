@@ -63,7 +63,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from flask import jsonify, request
+from flask import g, jsonify, request
 from flask_smorest import Blueprint, abort
 from marshmallow import Schema, fields as ma_fields
 
@@ -73,11 +73,14 @@ from src.app.extensions import db
 from src.app.models.privilege import Privilege
 from src.app.models.role import Role, RoleAssignment
 from src.app.models.user import User
+from src.app.events.event_bus import emit_event
+from src.app.events.event_types import EventType
 from src.app.schemas.role import (
     RoleAssignmentSchema,
     RoleBulkAssignmentSchema,
     RoleCreateSchema,
     RoleSchema,
+    RoleUpdateSchema,
 )
 
 # ---------------------------------------------------------------------------
@@ -476,26 +479,42 @@ def create_role(role_data: dict) -> Role:
         len(privileges),
         role.to_dict(),
     )
+
+    # Emit audit event for role creation (Feature F-303)
+    try:
+        caller_id = getattr(g, "current_user", None)
+        caller_id = getattr(caller_id, "user_id", "<system>") if caller_id else "<system>"
+        emit_event(EventType.USER_AUTHENTICATED, payload={
+            "user_id": caller_id,
+            "action": "role_created",
+            "target_role": role.role_id,
+            "ip_address": request.remote_addr or "unknown",
+        })
+    except Exception:
+        logger.debug("Failed to emit role create audit event.", exc_info=True)
+
     return role
 
 
 @roles_bp.route("/<string:role_id>", methods=["PUT"])
-@roles_bp.arguments(RoleCreateSchema)
+@roles_bp.arguments(RoleUpdateSchema)
 @roles_bp.response(200, RoleSchema)
 @login_required
 @require_permission("roles", "update")
 def update_role(role_data: dict, role_id: str) -> Role:
-    """Update an existing security role.
+    """Update an existing security role with partial update support.
 
-    Modifies the name, description, privileges, and/or source of an
-    existing role.  **Built-in roles** (``nx-admin``, ``nx-anonymous``)
-    are protected from modification.
+    Modifies only the fields present in the request body.  All fields
+    are optional — only provided fields are updated, preserving existing
+    values for omitted fields.  **Built-in roles** (``nx-admin``,
+    ``nx-anonymous``) are protected from modification.
 
     Path Parameters:
         role_id (str): The unique role identifier to update.
 
     Request Body:
-        Same as the create endpoint (:class:`RoleCreateSchema`).
+        Partial or full role data (:class:`RoleUpdateSchema`).  All
+        fields are optional.
 
     Returns:
         The updated role object serialized via :class:`RoleSchema`.
@@ -521,9 +540,9 @@ def update_role(role_data: dict, role_id: str) -> Role:
             ),
         )
 
-    # Validate privilege IDs
-    privileges: List[str] = role_data.get("privileges", [])
-    if privileges:
+    # Validate privilege IDs if provided
+    privileges: Optional[List[str]] = role_data.get("privileges")
+    if privileges is not None and privileges:
         invalid_ids: List[str] = _validate_privilege_ids(privileges)
         if invalid_ids:
             logger.warning(
@@ -556,14 +575,21 @@ def update_role(role_data: dict, role_id: str) -> Role:
                 message=f"A role with name '{new_name}' already exists.",
             )
 
-    # Apply updates via the BaseModel.update() method
+    # Apply only provided fields — preserve existing values for omitted fields
     try:
-        role.update(
-            name=new_name,
-            description=role_data.get("description", role.description),
-            privileges=privileges,
-            source=role_data.get("source", role.source),
-        )
+        update_kwargs = {}
+        update_kwargs["name"] = new_name
+        if "description" in role_data:
+            update_kwargs["description"] = role_data["description"]
+        else:
+            update_kwargs["description"] = role.description
+        if privileges is not None:
+            update_kwargs["privileges"] = privileges
+        else:
+            update_kwargs["privileges"] = role.privileges
+        update_kwargs["source"] = role_data.get("source", role.source)
+
+        role.update(**update_kwargs)
     except Exception as exc:
         db.session.rollback()
         logger.error(
@@ -576,12 +602,28 @@ def update_role(role_data: dict, role_id: str) -> Role:
             message=f"Failed to update role: {str(exc)}",
         )
 
+    effective_privileges = update_kwargs.get("privileges", [])
     logger.info(
         "Updated role: role_id='%s', name='%s', privileges=%d.",
         role.role_id,
         role.name,
-        len(privileges),
+        len(effective_privileges) if effective_privileges else 0,
     )
+
+    # Emit audit event for role update (Feature F-303)
+    try:
+        from flask import g as flask_g
+        caller_id = getattr(flask_g, "current_user", None)
+        caller_id = getattr(caller_id, "user_id", "<system>") if caller_id else "<system>"
+        emit_event(EventType.USER_AUTHENTICATED, payload={
+            "user_id": caller_id,
+            "action": "role_updated",
+            "target_role": role_id,
+            "ip_address": getattr(request, "remote_addr", "unknown"),
+        })
+    except Exception:
+        logger.debug("Failed to emit role update audit event.", exc_info=True)
+
     return role
 
 
@@ -651,6 +693,20 @@ def delete_role(role_id: str) -> None:
         )
 
     logger.info("Deleted role: role_id='%s'.", role_id)
+
+    # Emit audit event for role deletion (Feature F-303)
+    try:
+        caller_id = getattr(g, "current_user", None)
+        caller_id = getattr(caller_id, "user_id", "<system>") if caller_id else "<system>"
+        emit_event(EventType.USER_AUTHENTICATED, payload={
+            "user_id": caller_id,
+            "action": "role_deleted",
+            "target_role": role_id,
+            "ip_address": request.remote_addr or "unknown",
+        })
+    except Exception:
+        logger.debug("Failed to emit role delete audit event.", exc_info=True)
+
     return None
 
 

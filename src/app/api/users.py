@@ -56,6 +56,7 @@ Exports:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -72,6 +73,8 @@ from src.app.auth.password_utils import (
     validate_password_strength,
     verify_password,
 )
+from src.app.events.event_bus import emit_event
+from src.app.events.event_types import EventType
 from src.app.extensions import db
 from src.app.models.role import Role, RoleAssignment
 from src.app.models.user import User
@@ -644,12 +647,22 @@ def create_user(args: Dict[str, Any]) -> Dict[str, Any]:
 
         db.session.commit()
 
+        caller_id = getattr(g.current_user, "user_id", "<system>")
         current_app.logger.info(
             "User '%s' created with status='%s' by '%s'.",
             user.user_id,
             user.status,
-            getattr(g.current_user, "user_id", "<system>"),
+            caller_id,
         )
+
+        # Emit audit event for user creation (Feature F-303)
+        emit_event(EventType.USER_AUTHENTICATED, payload={
+            "user_id": caller_id,
+            "action": "user_created",
+            "target_user": user.user_id,
+            "ip_address": request.remote_addr or "unknown",
+        })
+
         return _user_to_response(user)
 
     except Exception as exc:
@@ -724,11 +737,21 @@ def update_user(args: Dict[str, Any], user_id: str) -> Dict[str, Any]:
 
         db.session.commit()
 
+        caller_id = getattr(g.current_user, "user_id", "<system>")
         logger.info(
             "User '%s' updated by '%s'.",
             user.user_id,
-            getattr(g.current_user, "user_id", "<system>"),
+            caller_id,
         )
+
+        # Emit audit event for user update (Feature F-303)
+        emit_event(EventType.USER_AUTHENTICATED, payload={
+            "user_id": caller_id,
+            "action": "user_updated",
+            "target_user": user.user_id,
+            "ip_address": request.remote_addr or "unknown",
+        })
+
         return _user_to_response(user)
 
     except Exception as exc:
@@ -794,11 +817,20 @@ def delete_user(user_id: str) -> None:
         db.session.delete(user)
         db.session.commit()
 
+        caller_id = getattr(g.current_user, "user_id", "<system>")
         current_app.logger.info(
             "User '%s' deleted by '%s'.",
             user_id,
-            getattr(g.current_user, "user_id", "<system>"),
+            caller_id,
         )
+
+        # Emit audit event for user deletion (Feature F-303)
+        emit_event(EventType.USER_AUTHENTICATED, payload={
+            "user_id": caller_id,
+            "action": "user_deleted",
+            "target_user": user_id,
+            "ip_address": request.remote_addr or "unknown",
+        })
 
     except Exception as exc:
         db.session.rollback()
@@ -969,7 +1001,12 @@ def generate_user_api_key(user_id: str) -> Dict[str, Any]:
 
     try:
         api_key: str = generate_api_key()
-        user.api_key = api_key
+        # Store the SHA-256 hash of the API key — NEVER store plaintext.
+        # The BearerTokenRealm._find_user_by_api_key() hashes the incoming
+        # token with SHA-256 and queries User.api_key, so the stored value
+        # must be the hash for the comparison to succeed (Feature F-304).
+        api_key_hash: str = hashlib.sha256(api_key.encode()).hexdigest()
+        user.api_key = api_key_hash
         now: datetime = datetime.now(timezone.utc)
 
         db.session.commit()
@@ -1029,8 +1066,9 @@ def revoke_user_api_key(user_id: str) -> None:
             "Revoke API key requested for user '%s' but no key exists.",
             user_id,
         )
-        # Idempotent — return 204 even if no key existed
-        return
+        # Return 404 when no API key exists to revoke — consistent with
+        # RESTful semantics (the resource does not exist).
+        abort(404, message=f"No API key exists for user '{user_id}'")
 
     try:
         user.api_key = None

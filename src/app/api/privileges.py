@@ -71,12 +71,14 @@ import re
 import uuid
 from typing import Any, Dict, List, Optional
 
-from flask import current_app, jsonify
+from flask import current_app, g, jsonify, request
 from flask_smorest import Blueprint, abort
 from marshmallow import Schema, ValidationError, fields, validate, validates
 
 from src.app.auth.authentication import login_required
 from src.app.auth.authorization import require_permission
+from src.app.events.event_bus import emit_event
+from src.app.events.event_types import EventType
 from src.app.extensions import db
 from src.app.models.content_selector import ContentSelector
 from src.app.models.privilege import Privilege
@@ -774,6 +776,20 @@ def create_privilege(payload: Dict[str, Any]) -> Privilege:
             privilege.privilege_id,
             privilege.type,
         )
+
+        # Emit audit event for privilege creation (Feature F-303)
+        try:
+            caller_id = getattr(g, "current_user", None)
+            caller_id = getattr(caller_id, "user_id", "<system>") if caller_id else "<system>"
+            emit_event(EventType.USER_AUTHENTICATED, payload={
+                "user_id": caller_id,
+                "action": "privilege_created",
+                "target_privilege": privilege.privilege_id,
+                "ip_address": request.remote_addr or "unknown",
+            })
+        except Exception:
+            logger.debug("Failed to emit privilege create audit event.", exc_info=True)
+
         return privilege
 
     except Exception as exc:
@@ -790,10 +806,63 @@ def create_privilege(payload: Dict[str, Any]) -> Privilege:
         )
 
 
+class PrivilegeUpdateSchema(Schema):
+    """Marshmallow schema for updating privilege descriptors.
+
+    All fields are **optional** to support partial updates — only fields
+    present in the request body are modified.  This differs from
+    :class:`PrivilegeSchema` where ``privilege_id``, ``type``, and ``name``
+    are required.
+
+    This is consistent with the ``RoleUpdateSchema`` and ``UserUpdateSchema``
+    patterns in the other security API endpoints.
+    """
+
+    type = fields.String(
+        required=False,
+        validate=validate.OneOf(sorted(VALID_PRIVILEGE_TYPES)),
+        metadata={
+            "description": "Privilege type identifier.",
+        },
+    )
+
+    name = fields.String(
+        required=False,
+        validate=validate.Length(min=1, max=255),
+        metadata={
+            "description": "Human-readable privilege name.",
+        },
+    )
+
+    description = fields.String(
+        required=False,
+        allow_none=True,
+        metadata={
+            "description": "Optional description of what this privilege grants.",
+        },
+    )
+
+    properties = fields.Dict(
+        required=False,
+        allow_none=True,
+        metadata={
+            "description": "Type-specific privilege properties.",
+        },
+    )
+
+    attributes = fields.Dict(
+        required=False,
+        allow_none=True,
+        metadata={
+            "description": "Extensible JSON metadata.",
+        },
+    )
+
+
 @privileges_bp.route(
     "/privileges/<string:privilege_id>", methods=["PUT"]
 )
-@privileges_bp.arguments(PrivilegeSchema)
+@privileges_bp.arguments(PrivilegeUpdateSchema)
 @privileges_bp.response(200, PrivilegeSchema)
 @login_required
 @require_permission("privileges", "update")
@@ -885,6 +954,20 @@ def update_privilege(
             privilege.privilege_id,
             privilege.type,
         )
+
+        # Emit audit event for privilege update (Feature F-303)
+        try:
+            caller_id = getattr(g, "current_user", None)
+            caller_id = getattr(caller_id, "user_id", "<system>") if caller_id else "<system>"
+            emit_event(EventType.USER_AUTHENTICATED, payload={
+                "user_id": caller_id,
+                "action": "privilege_updated",
+                "target_privilege": privilege.privilege_id,
+                "ip_address": request.remote_addr or "unknown",
+            })
+        except Exception:
+            logger.debug("Failed to emit privilege update audit event.", exc_info=True)
+
         return privilege
 
     except Exception as exc:
@@ -981,6 +1064,20 @@ def delete_privilege(privilege_id: str) -> str:
             "Privilege deleted successfully: '%s'.",
             privilege_id,
         )
+
+        # Emit audit event for privilege deletion (Feature F-303)
+        try:
+            caller_id = getattr(g, "current_user", None)
+            caller_id = getattr(caller_id, "user_id", "<system>") if caller_id else "<system>"
+            emit_event(EventType.USER_AUTHENTICATED, payload={
+                "user_id": caller_id,
+                "action": "privilege_deleted",
+                "target_privilege": privilege_id,
+                "ip_address": request.remote_addr or "unknown",
+            })
+        except Exception:
+            logger.debug("Failed to emit privilege delete audit event.", exc_info=True)
+
         return ""
 
     except Exception as exc:

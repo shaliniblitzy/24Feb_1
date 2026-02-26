@@ -70,6 +70,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from flask import abort, current_app, g, request
 
+from src.app.events.event_bus import emit_event
+from src.app.events.event_types import EventType
 from src.app.extensions import basic_auth, event_signals, multi_auth, token_auth
 from src.app.models.user import User
 
@@ -878,7 +880,13 @@ class AuthenticationChain:
         realm_name: str,
         ip: str,
     ) -> None:
-        """Emit the ``auth_success`` Blinker signal.
+        """Emit authentication success events.
+
+        Emits BOTH:
+        1. The ``auth_success`` Blinker signal (for direct subscribers)
+        2. ``emit_event(EventType.USER_AUTHENTICATED, ...)`` through the
+           central event bus so that the AuditLogSubscriber (Feature F-303)
+           captures the event in the audit trail.
 
         Wrapped in a try/except to ensure that a subscriber error never
         breaks the authentication flow.
@@ -901,6 +909,22 @@ class AuthenticationChain:
                 exc_info=True,
             )
 
+        # Also emit via the central event bus so the AuditLogSubscriber
+        # (which listens for EventType.USER_AUTHENTICATED on signal
+        # "user.authenticated") receives the event for audit persistence.
+        try:
+            emit_event(EventType.USER_AUTHENTICATED, payload={
+                "user_id": user.user_id,
+                "realm": realm_name,
+                "ip_address": ip,
+                "action": "login_success",
+            })
+        except Exception:
+            self.logger.debug(
+                "Error emitting USER_AUTHENTICATED event.",
+                exc_info=True,
+            )
+
     def _emit_auth_failure(
         self,
         username: str,
@@ -908,7 +932,12 @@ class AuthenticationChain:
         reason: str,
         ip: str,
     ) -> None:
-        """Emit the ``auth_failure`` Blinker signal.
+        """Emit authentication failure events.
+
+        Emits BOTH:
+        1. The ``auth_failure`` Blinker signal (for direct subscribers)
+        2. ``emit_event(EventType.USER_AUTHORIZATION_FAILED, ...)`` through
+           the central event bus for audit logging (Feature F-303).
 
         Wrapped in a try/except to ensure that a subscriber error never
         breaks the authentication flow.
@@ -930,6 +959,21 @@ class AuthenticationChain:
         except Exception:
             self.logger.debug(
                 "Error emitting auth_failure signal.",
+                exc_info=True,
+            )
+
+        # Also emit via the central event bus for audit trail persistence.
+        try:
+            emit_event(EventType.USER_AUTHORIZATION_FAILED, payload={
+                "user_id": username,
+                "realm": realm_name,
+                "reason": reason,
+                "ip_address": ip,
+                "action": "login_failure",
+            })
+        except Exception:
+            self.logger.debug(
+                "Error emitting USER_AUTHORIZATION_FAILED event.",
                 exc_info=True,
             )
 

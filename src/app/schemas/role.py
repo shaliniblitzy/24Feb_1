@@ -73,6 +73,7 @@ from marshmallow.validate import Length, OneOf
 __all__: list[str] = [
     "RoleSchema",
     "RoleCreateSchema",
+    "RoleUpdateSchema",
     "RoleAssignmentSchema",
     "RoleBulkAssignmentSchema",
     "PrivilegeSchema",
@@ -380,6 +381,79 @@ class RoleCreateSchema(Schema):
         """
         if "role_id" in data and isinstance(data["role_id"], str):
             data["role_id"] = data["role_id"].strip()
+        if "name" in data and isinstance(data["name"], str):
+            data["name"] = data["name"].strip()
+        if "source" in data and isinstance(data["source"], str):
+            data["source"] = data["source"].strip().lower()
+        return data
+
+
+# ===========================================================================
+# RoleUpdateSchema
+# ===========================================================================
+
+
+class RoleUpdateSchema(Schema):
+    """Marshmallow schema for updating existing role definitions.
+
+    All fields are **optional** to support partial updates — only the
+    fields included in the request body are modified.  This differs from
+    :class:`RoleCreateSchema` where ``role_id`` and ``name`` are required.
+
+    This schema replaces the use of ``RoleCreateSchema`` on the PUT endpoint
+    and is consistent with the ``UserUpdateSchema`` pattern in the users API,
+    which also supports partial updates.
+
+    Usage::
+
+        schema = RoleUpdateSchema()
+        result = schema.load({"description": "Updated description"})
+        # Only 'description' is present in result
+    """
+
+    name = fields.String(
+        required=False,
+        validate=Length(min=1, max=255),
+        metadata={"description": "Human-readable role name."},
+    )
+
+    description = fields.String(
+        required=False,
+        allow_none=True,
+        metadata={"description": "Optional role description."},
+    )
+
+    privileges = fields.List(
+        fields.String(),
+        required=False,
+        metadata={
+            "description": (
+                "List of privilege IDs to associate with this role."
+            ),
+        },
+    )
+
+    source = fields.String(
+        required=False,
+        validate=OneOf(VALID_ROLE_SOURCES),
+        metadata={
+            "description": (
+                "Role source: 'internal' (default) or 'external' "
+                "(LDAP/SSO mapped)."
+            ),
+        },
+    )
+
+    @pre_load
+    def normalize_input(self, data: dict, **kwargs) -> dict:
+        """Strip whitespace from string fields before validation.
+
+        Args:
+            data: Raw input data dictionary.
+
+        Returns:
+            The cleaned data dictionary.
+        """
         if "name" in data and isinstance(data["name"], str):
             data["name"] = data["name"].strip()
         if "source" in data and isinstance(data["source"], str):

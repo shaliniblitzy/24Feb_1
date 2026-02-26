@@ -762,8 +762,15 @@ class TestUserAPI:
     def test_revoke_api_key(self, client, auth_headers, admin_user,
                             db_session):
         """DELETE /api/v1/security/users/<user_id>/api-key returns 204."""
-        admin_user.api_key = "test-api-key-to-revoke"
-        db_session.commit()
+        # Generate an API key via the API endpoint (stores SHA-256 hash)
+        gen_resp = client.post(
+            f"/api/v1/security/users/{admin_user.user_id}/api-key",
+            headers=auth_headers,
+        )
+        assert gen_resp.status_code == 201, (
+            f"API key generation failed: {gen_resp.get_json()}"
+        )
+        # Now revoke it
         resp = client.delete(
             f"/api/v1/security/users/{admin_user.user_id}/api-key",
             headers=auth_headers,
