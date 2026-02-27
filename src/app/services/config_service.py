@@ -104,6 +104,51 @@ SENSITIVE_KEYS: set[str] = {
     "system.http.proxy.password",
 }
 
+# Patterns in configuration key names that indicate the value is sensitive
+# and must be masked in log output to prevent credential leakage (CWE-532).
+# Matched case-insensitively against the final segment of dot-notation keys.
+_SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset({
+    "password",
+    "secret",
+    "secret_key",
+    "token",
+    "api_key",
+    "apikey",
+    "credentials",
+    "private_key",
+})
+
+# Redaction placeholder used in log messages for sensitive values.
+_LOG_REDACTED: str = "****"
+
+
+def _mask_value_for_logging(key: str, value: Any) -> str:
+    """Return a safe representation of *value* for log messages.
+
+    If the *key* matches any known sensitive pattern (or is a member of
+    :data:`SENSITIVE_KEYS`), the value is replaced with ``'****'`` to
+    prevent credential leakage into log files.
+
+    Args:
+        key: Dot-notation configuration key.
+        value: The raw configuration value.
+
+    Returns:
+        Either the string representation of *value* or ``'****'``.
+    """
+    # Direct membership check against the explicit sensitive-key set
+    if key in SENSITIVE_KEYS:
+        return _LOG_REDACTED
+
+    # Pattern-based check: split on dots and check each segment
+    key_lower = key.lower()
+    for pattern in _SENSITIVE_KEY_PATTERNS:
+        if pattern in key_lower:
+            return _LOG_REDACTED
+
+    return str(value)
+
+
 # Default values for critical system settings.  These are created in the
 # database on first run via ``initialize_defaults()`` and serve as in-code
 # fallbacks when a key is not found in the DB or cache.
@@ -348,7 +393,7 @@ class ConfigService:
                 self.logger.info(
                     "Updated SystemConfig '%s' = '%s' (category=%s).",
                     key,
-                    str_value,
+                    _mask_value_for_logging(key, str_value),
                     category,
                 )
             else:
@@ -361,7 +406,7 @@ class ConfigService:
                 self.logger.info(
                     "Created SystemConfig '%s' = '%s' (category=%s).",
                     key,
-                    str_value,
+                    _mask_value_for_logging(key, str_value),
                     category,
                 )
 
@@ -371,13 +416,18 @@ class ConfigService:
             parsed = self._parse_value(str_value) if str_value is not None else None
             self._update_cache(key, parsed)
 
-            # Emit event for propagation, audit, webhooks
+            # Emit event for propagation, audit, webhooks.
+            # Mask sensitive values in the event payload to prevent
+            # credential leakage through audit logs or subscriber logging.
+            is_sensitive = key in SENSITIVE_KEYS or any(
+                p in key.lower() for p in _SENSITIVE_KEY_PATTERNS
+            )
             emit_event(
                 EventType.CONFIG_CHANGED,
                 payload={
                     "key": key,
-                    "old_value": old_value,
-                    "new_value": str_value,
+                    "old_value": _LOG_REDACTED if is_sensitive else old_value,
+                    "new_value": _LOG_REDACTED if is_sensitive else str_value,
                     "category": category,
                 },
             )
@@ -418,11 +468,14 @@ class ConfigService:
 
             self.logger.info("Deleted SystemConfig '%s'.", key)
 
+            is_sensitive = key in SENSITIVE_KEYS or any(
+                p in key.lower() for p in _SENSITIVE_KEY_PATTERNS
+            )
             emit_event(
                 EventType.CONFIG_CHANGED,
                 payload={
                     "key": key,
-                    "old_value": old_value,
+                    "old_value": _LOG_REDACTED if is_sensitive else old_value,
                     "new_value": None,
                     "category": old_category,
                 },

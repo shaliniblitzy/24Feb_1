@@ -206,6 +206,37 @@ def _make_health_response(
     )
 
 
+def _is_request_authenticated() -> bool:
+    """Check if the current request has valid authentication credentials.
+
+    Attempts to verify the caller's identity using the same authentication
+    chain as ``@login_required``, but without aborting if authentication
+    fails.  This allows unauthenticated callers to receive a reduced
+    response (without sensitive internal details) rather than an HTTP 401.
+
+    Returns:
+        ``True`` if the caller is authenticated, ``False`` otherwise.
+    """
+    from flask import g
+
+    # Check if authentication already ran (e.g., via before_request hook)
+    if getattr(g, "current_user", None) is not None:
+        return True
+
+    # Attempt authentication via the application auth chain
+    try:
+        from src.app.auth.authentication import authenticate_request
+        result = authenticate_request()
+        if result.authenticated and result.user is not None:
+            g.current_user = result.user
+            return True
+    except Exception:
+        # Authentication failed or not configured — caller is unauthenticated
+        pass
+
+    return False
+
+
 def _get_flask_version() -> str:
     """Return the installed Flask version string.
 
@@ -538,7 +569,11 @@ def individual_health_check(check_name: str) -> Response:
     ``'elasticsearch'``, ``'blobstore'``, ``'disk_space'``,
     ``'system_memory'``) and returns its individual result.
 
-    **No authentication required.**
+    **Security:** For unauthenticated requests, internal details (database
+    URLs, filesystem paths, pool sizes, driver information) are stripped from
+    the response to prevent information disclosure that could aid
+    reconnaissance attacks.  Authenticated users receive full diagnostic
+    details.
 
     Args:
         check_name: The registered name of the health check to execute.
@@ -586,7 +621,18 @@ def individual_health_check(check_name: str) -> Response:
         result.duration_ms,
     )
 
-    return _make_health_response(result.to_dict(), result.status)
+    # Determine whether the caller is authenticated.  If not, strip
+    # internal details (database URLs, filesystem paths, pool sizes,
+    # driver info) from the response to prevent information disclosure.
+    is_authenticated: bool = _is_request_authenticated()
+    result_dict: Dict[str, Any] = result.to_dict()
+
+    if not is_authenticated:
+        # Strip sensitive internal details — return only status, name,
+        # message, duration, and timestamp for unauthenticated callers.
+        result_dict.pop("details", None)
+
+    return _make_health_response(result_dict, result.status)
 
 
 # ============================================================================

@@ -497,19 +497,10 @@ class RepositoryManager:
             )
             raise
 
-        # --- Event Phase ---
-        emit_event(
-            EventType.REPOSITORY_CREATED,
-            {
-                "name": name,
-                "format": format_type,
-                "type": repo_type,
-                "blob_store_name": blob_store_name,
-                "online": online,
-                "user_id": _get_request_user_id(),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-        )
+        # NOTE: Event emission for REPOSITORY_CREATED is handled by the API
+        # layer (src.app.api.repositories) which enriches the payload with
+        # request context (ip_address, source).  Emitting here would cause
+        # duplicate audit events for every API-driven creation.
 
         # Auto-start if online
         if online:
@@ -648,18 +639,10 @@ class RepositoryManager:
             )
             raise
 
-        # Emit update event
-        emit_event(
-            EventType.REPOSITORY_UPDATED,
-            {
-                "name": name,
-                "format": repository.format,
-                "type": repository.type,
-                "online": repository.online,
-                "user_id": _get_request_user_id(),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-        )
+        # NOTE: Event emission for REPOSITORY_UPDATED is handled by the API
+        # layer (src.app.api.repositories) which enriches the payload with
+        # request context (ip_address, source).  Emitting here would cause
+        # duplicate audit events for every API-driven update.
 
         return repository
 
@@ -712,9 +695,6 @@ class RepositoryManager:
                     repository_name=name,
                 )
 
-        repo_format = repository.format
-        repo_type = repository.type
-
         try:
             # Delete all assets for this repository
             Asset.query.filter(
@@ -743,17 +723,10 @@ class RepositoryManager:
             )
             raise
 
-        # Emit delete event
-        emit_event(
-            EventType.REPOSITORY_DELETED,
-            {
-                "name": name,
-                "format": repo_format,
-                "type": repo_type,
-                "user_id": _get_request_user_id(),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-        )
+        # NOTE: Event emission for REPOSITORY_DELETED is handled by the API
+        # layer (src.app.api.repositories) which enriches the payload with
+        # request context (ip_address, source).  Emitting here would cause
+        # duplicate audit events for every API-driven deletion.
 
         return True
 

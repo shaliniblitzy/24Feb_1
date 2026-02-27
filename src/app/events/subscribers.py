@@ -144,9 +144,19 @@ class AuditLogSubscriber:
 
         Creates a class-specific logger and builds the list of event types
         this subscriber handles (all members of :class:`EventType`).
+
+        Also obtains a reference to the dedicated ``src.app.audit`` logger
+        which is connected to the ``auditHandler`` in ``logging.conf``,
+        ensuring that audit events are written to both the database and
+        the ``logs/audit.log`` file for file-based backup (F-303).
         """
         self.logger: logging.Logger = logging.getLogger(
             f"{__name__}.AuditLogSubscriber"
+        )
+        # Dedicated audit file logger — writes to logs/audit.log via the
+        # auditHandler defined in logging.conf (qualname=src.app.audit).
+        self._audit_file_logger: logging.Logger = logging.getLogger(
+            "src.app.audit"
         )
         self._event_types: list[EventType] = list(EventType)
 
@@ -256,6 +266,17 @@ class AuditLogSubscriber:
 
             db.session.add(audit_event)
             db.session.commit()
+
+            # Write to the dedicated audit log file (logs/audit.log) via the
+            # src.app.audit logger.  This provides a file-based backup of the
+            # audit trail in case the database is unavailable or corrupted.
+            self._audit_file_logger.info(
+                "AUDIT event_type=%s domain=%s user=%s ip=%s",
+                event_type_str,
+                domain,
+                user_id or "anonymous",
+                ip_address or "unknown",
+            )
 
             self.logger.debug(
                 "Audit event created: type=%s, domain=%s, user=%s",

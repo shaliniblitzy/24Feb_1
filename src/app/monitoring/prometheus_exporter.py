@@ -151,8 +151,8 @@ def prometheus_metrics() -> Response:
 
         return Response(
             metrics_output,
-            mimetype=CONTENT_TYPE_LATEST,
             status=200,
+            content_type=CONTENT_TYPE_LATEST,
         )
     except Exception as exc:
         logger.error("Failed to generate Prometheus metrics: %s", exc)
