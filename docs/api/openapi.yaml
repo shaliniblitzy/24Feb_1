@@ -1,0 +1,5230 @@
+openapi: '3.0.3'
+
+info:
+  title: Sonatype Nexus Repository Manager API
+  description: >
+    REST API for Sonatype Nexus Repository Manager — a universal binary repository
+    manager supporting Maven, npm, Docker, NuGet, PyPI, APT, and Raw formats.
+    Reimplemented in Python 3 / Flask 3.1.3. Provides repository management,
+    component/asset operations, security (RBAC), system configuration, search,
+    health monitoring, scheduled tasks, BlobStore management, cleanup policies,
+    scripting, webhook integration, and SSL/TLS certificate management.
+  version: '1.0.0'
+  contact:
+    name: Nexus Repository Team
+  license:
+    name: Eclipse Public License 2.0
+    url: https://www.eclipse.org/legal/epl-2.0/
+
+servers:
+  - url: /
+    description: Local development server
+  - url: https://nexus.example.com
+    description: Production server
+
+tags:
+  - name: health
+    description: Health status, readiness probes, and monitoring (F-401)
+  - name: repositories
+    description: Repository management operations — CRUD for Hosted, Proxy, Group types (F-501-RQ-001)
+  - name: components
+    description: Component upload, download, and management (F-501-RQ-002)
+  - name: assets
+    description: Asset download, metadata, and management (F-501-RQ-002)
+  - name: search
+    description: Full-text search across repositories (F-103)
+  - name: users
+    description: User account management (F-501-RQ-003)
+  - name: roles
+    description: Role and role assignment management (F-501-RQ-003)
+  - name: privileges
+    description: Privilege and content selector management (F-501-RQ-003)
+  - name: security
+    description: SSL/TLS certificate management (F-302)
+  - name: tasks
+    description: Scheduled task management and execution (F-402, F-501-RQ-004)
+  - name: system
+    description: System configuration and management (F-404, F-501-RQ-004)
+  - name: blobstores
+    description: BlobStore management and configuration (F-201, F-202)
+  - name: cleanup
+    description: Cleanup policy management and execution (F-204)
+  - name: scripts
+    description: Script storage and execution (F-502)
+  - name: webhooks
+    description: Webhook configuration for event-driven integrations (F-503)
+
+security:
+  - basicAuth: []
+  - bearerAuth: []
+  - apiKeyAuth: []
+
+paths:
+  # ──────────────────────────────────────────────
+  # Health Endpoints (F-401)
+  # ──────────────────────────────────────────────
+  /api/v1/health:
+    get:
+      tags: [health]
+      summary: Get system health status
+      description: >
+        Returns composite health status aggregating all registered health checks
+        including database connectivity, Elasticsearch availability, BlobStore
+        accessibility, and system resource utilization.
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: System is healthy or degraded but operational
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompositeHealthResult'
+        '503':
+          description: System is unhealthy — one or more critical checks failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompositeHealthResult'
+
+  /api/v1/health/live:
+    get:
+      tags: [health]
+      summary: Kubernetes liveness probe
+      description: >
+        Lightweight liveness check indicating the application process is running.
+        Always returns 200 if the Flask application is responsive.
+      operationId: getLiveness
+      security: []
+      responses:
+        '200':
+          description: Application is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [alive]
+                    example: alive
+                  timestamp:
+                    type: string
+                    format: date-time
+                required:
+                  - status
+                  - timestamp
+
+  /api/v1/health/ready:
+    get:
+      tags: [health]
+      summary: Kubernetes readiness probe
+      description: >
+        Readiness check verifying the application can accept traffic.
+        Returns 503 if critical dependencies (database, BlobStore) are unavailable.
+      operationId: getReadiness
+      security: []
+      responses:
+        '200':
+          description: Application is ready to accept traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ready]
+                    example: ready
+                  timestamp:
+                    type: string
+                    format: date-time
+                required:
+                  - status
+                  - timestamp
+        '503':
+          description: Application is not ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [not_ready]
+                    example: not_ready
+                  message:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /api/v1/health/{check_name}:
+    get:
+      tags: [health]
+      summary: Get individual health check result
+      description: >
+        Returns the result of a specific named health check such as database,
+        elasticsearch, or blobstore.
+      operationId: getHealthCheck
+      security: []
+      parameters:
+        - name: check_name
+          in: path
+          required: true
+          description: Name of the health check (e.g., database, elasticsearch, blobstore)
+          schema:
+            type: string
+            example: database
+      responses:
+        '200':
+          description: Health check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthCheckResult'
+        '404':
+          description: Unknown health check name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/health/system:
+    get:
+      tags: [health]
+      summary: Get system information
+      description: >
+        Returns detailed system information including Python version, Flask version,
+        uptime, operating system details, database type, and node identifier.
+        Requires authentication.
+      operationId: getSystemInfo
+      security:
+        - basicAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: System information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemInfo'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Repository Endpoints (F-501-RQ-001)
+  # ──────────────────────────────────────────────
+  /api/v1/repositories:
+    get:
+      tags: [repositories]
+      summary: List all repositories
+      description: >
+        Returns a list of all configured repositories, optionally filtered by
+        format and/or type. Supports Maven, npm, Docker, NuGet, PyPI, APT, and
+        Raw formats in Hosted, Proxy, and Group types (F-101, F-102).
+      operationId: listRepositories
+      parameters:
+        - name: format
+          in: query
+          required: false
+          description: Filter by repository format
+          schema:
+            $ref: '#/components/schemas/RepositoryFormat'
+        - name: type
+          in: query
+          required: false
+          description: Filter by repository type
+          schema:
+            $ref: '#/components/schemas/RepositoryType'
+      responses:
+        '200':
+          description: List of repositories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RepositoryResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [repositories]
+      summary: Create a new repository
+      description: >
+        Creates a new repository with the specified format, type, and configuration.
+        Name must match pattern ^[a-zA-Z0-9][a-zA-Z0-9._-]*$. Proxy repositories
+        require attributes.proxy.remoteUrl. Group repositories require
+        attributes.group.memberNames.
+      operationId: createRepository
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositoryCreate'
+      responses:
+        '201':
+          description: Repository created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Insufficient privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Repository with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/repositories/{repository_name}:
+    get:
+      tags: [repositories]
+      summary: Get repository by name
+      description: Returns detailed information for a single repository.
+      operationId: getRepository
+      parameters:
+        - name: repository_name
+          in: path
+          required: true
+          description: Unique repository name
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '200':
+          description: Repository details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [repositories]
+      summary: Update repository
+      description: >
+        Updates an existing repository configuration. The name, format, and type
+        fields are immutable and cannot be changed after creation.
+      operationId: updateRepository
+      parameters:
+        - name: repository_name
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositoryUpdate'
+      responses:
+        '200':
+          description: Repository updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [repositories]
+      summary: Delete repository
+      description: Permanently deletes a repository and all its contents.
+      operationId: deleteRepository
+      parameters:
+        - name: repository_name
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '204':
+          description: Repository deleted successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/repositories/{repository_name}/status:
+    put:
+      tags: [repositories]
+      summary: Set repository online/offline status
+      description: Changes the online status of a repository.
+      operationId: setRepositoryStatus
+      parameters:
+        - name: repository_name
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                online:
+                  type: boolean
+                  description: Whether the repository should be online
+              required:
+                - online
+      responses:
+        '200':
+          description: Repository status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/repositories/{repository_name}/rebuild-index:
+    post:
+      tags: [repositories]
+      summary: Trigger index rebuild
+      description: >
+        Initiates an asynchronous rebuild of the repository search index.
+        Returns 202 Accepted immediately.
+      operationId: rebuildRepositoryIndex
+      parameters:
+        - name: repository_name
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '202':
+          description: Index rebuild initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Index rebuild initiated for repository
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/repositories/{repository_name}/invalidate-cache:
+    post:
+      tags: [repositories]
+      summary: Invalidate proxy cache
+      description: >
+        Invalidates the local cache for a proxy repository, forcing fresh
+        retrieval from the remote source on next request.
+      operationId: invalidateRepositoryCache
+      parameters:
+        - name: repository_name
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '204':
+          description: Cache invalidated successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Component Endpoints (F-501-RQ-002)
+  # ──────────────────────────────────────────────
+  /api/v1/components:
+    get:
+      tags: [components]
+      summary: List components in a repository
+      description: >
+        Returns a paginated list of components in the specified repository.
+        Supports filtering by namespace, name, and version.
+      operationId: listComponents
+      parameters:
+        - name: repository
+          in: query
+          required: true
+          description: Repository name to list components from
+          schema:
+            type: string
+        - name: namespace
+          in: query
+          required: false
+          description: Filter by component namespace (group)
+          schema:
+            type: string
+        - name: name
+          in: query
+          required: false
+          description: Filter by component name
+          schema:
+            type: string
+        - name: version
+          in: query
+          required: false
+          description: Filter by component version
+          schema:
+            type: string
+        - name: continuationToken
+          in: query
+          required: false
+          description: Token for paginated results
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list of components
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComponentSearchResult'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [components]
+      summary: Upload a component
+      description: >
+        Uploads a new component with associated assets to a hosted repository.
+        Only hosted repositories accept uploads. Uses multipart form-data
+        encoding for binary asset upload.
+      operationId: uploadComponent
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ComponentUpload'
+      responses:
+        '201':
+          description: Component uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComponentDetail'
+        '400':
+          description: Format validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Insufficient privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Component already exists (write policy ALLOW_ONCE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/components/{component_id}:
+    get:
+      tags: [components]
+      summary: Get component details
+      description: >
+        Returns detailed information for a single component including
+        all associated assets.
+      operationId: getComponent
+      parameters:
+        - name: component_id
+          in: path
+          required: true
+          description: Component unique identifier
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Component details with nested assets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComponentDetail'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Component not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [components]
+      summary: Delete component
+      description: >
+        Permanently deletes a component and all associated assets (cascade delete).
+      operationId: deleteComponent
+      parameters:
+        - name: component_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Component deleted successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Component not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Asset Endpoints (F-501-RQ-002)
+  # ──────────────────────────────────────────────
+  /api/v1/assets:
+    get:
+      tags: [assets]
+      summary: List assets in a repository
+      description: Returns a paginated list of assets in the specified repository.
+      operationId: listAssets
+      parameters:
+        - name: repository
+          in: query
+          required: true
+          description: Repository name to list assets from
+          schema:
+            type: string
+        - name: continuationToken
+          in: query
+          required: false
+          description: Token for paginated results
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list of assets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/assets/{asset_id}:
+    get:
+      tags: [assets]
+      summary: Get asset metadata
+      description: >
+        Returns metadata for a single asset including checksums (SHA1, SHA256, MD5),
+        size, content type, last downloaded timestamp, and download URL.
+      operationId: getAsset
+      parameters:
+        - name: asset_id
+          in: path
+          required: true
+          description: Asset unique identifier
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Asset metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Asset not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [assets]
+      summary: Delete asset
+      description: Permanently deletes an individual asset.
+      operationId: deleteAsset
+      parameters:
+        - name: asset_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Asset deleted successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Asset not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/assets/{asset_id}/download:
+    get:
+      tags: [assets]
+      summary: Download asset binary
+      description: >
+        Downloads the binary content of an asset. Returns the file with
+        appropriate Content-Type and Content-Disposition headers. Updates
+        the last_downloaded timestamp. Performance target less than 200ms
+        for cached artifacts.
+      operationId: downloadAsset
+      parameters:
+        - name: asset_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Asset binary content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              description: Attachment filename
+              schema:
+                type: string
+            Content-Type:
+              description: MIME type of the asset
+              schema:
+                type: string
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Asset not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Search Endpoints (F-103)
+  # ──────────────────────────────────────────────
+  /api/v1/search:
+    get:
+      tags: [search]
+      summary: Search components
+      description: >
+        Full-text search across all repositories. Supports keyword search,
+        filtering by format and repository, sorting, and pagination with
+        faceted aggregation counts. Performance target less than 2 seconds
+        for 100K components (F-103).
+      operationId: searchComponents
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Keyword search query
+          schema:
+            type: string
+        - name: repository
+          in: query
+          required: false
+          description: Filter by repository name
+          schema:
+            type: string
+        - name: format
+          in: query
+          required: false
+          description: Filter by repository format
+          schema:
+            $ref: '#/components/schemas/RepositoryFormat'
+        - name: namespace
+          in: query
+          required: false
+          description: Filter by component namespace (group)
+          schema:
+            type: string
+        - name: name
+          in: query
+          required: false
+          description: Filter by component name
+          schema:
+            type: string
+        - name: version
+          in: query
+          required: false
+          description: Filter by component version
+          schema:
+            type: string
+        - name: sort
+          in: query
+          required: false
+          description: Sort field
+          schema:
+            type: string
+            enum: [name, version, group, repository, format]
+        - name: direction
+          in: query
+          required: false
+          description: Sort direction
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - name: page
+          in: query
+          required: false
+          description: Page number (zero-based)
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+        - name: page_size
+          in: query
+          required: false
+          description: Number of results per page
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 500
+      responses:
+        '200':
+          description: Search results with facets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResult'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/search/assets:
+    get:
+      tags: [search]
+      summary: Search assets
+      description: >
+        Searches for assets across repositories with keyword and filter support.
+      operationId: searchAssets
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Keyword search query
+          schema:
+            type: string
+        - name: repository
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: format
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/RepositoryFormat'
+        - name: name
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [name, path, size, repository]
+        - name: direction
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Asset search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResult'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/search/assets/sha1/{sha1}:
+    get:
+      tags: [search]
+      summary: Find asset by SHA1 checksum
+      description: >
+        Looks up assets matching the specified SHA1 checksum across all
+        repositories.
+      operationId: findAssetBySha1
+      parameters:
+        - name: sha1
+          in: path
+          required: true
+          description: SHA1 checksum (40 character hexadecimal string)
+          schema:
+            type: string
+            pattern: '^[a-fA-F0-9]{40}$'
+            minLength: 40
+            maxLength: 40
+      responses:
+        '200':
+          description: Matching assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AssetResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No matching asset found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/search/browse/{repository_name}:
+    get:
+      tags: [search]
+      summary: Browse repository tree (F-104)
+      description: >
+        Returns a directory-style listing of components and assets at the
+        specified path within a repository. Used for tree navigation.
+      operationId: browseRepository
+      parameters:
+        - name: repository_name
+          in: path
+          required: true
+          description: Repository to browse
+          schema:
+            type: string
+        - name: path
+          in: query
+          required: false
+          description: Path within the repository to browse (default is root)
+          schema:
+            type: string
+            default: /
+      responses:
+        '200':
+          description: Directory listing of entries at the browsing path
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path:
+                    type: string
+                    description: Current browsing path
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          description: Entry name
+                        type:
+                          type: string
+                          enum: [folder, file]
+                          description: Entry type
+                        path:
+                          type: string
+                          description: Full path of the entry
+                        size:
+                          type: integer
+                          nullable: true
+                          description: File size in bytes (null for folders)
+                        last_modified:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          description: Last modification timestamp
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Repository or path not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # User Endpoints (F-501-RQ-003, F-301)
+  # ──────────────────────────────────────────────
+  /api/v1/security/users:
+    get:
+      tags: [users]
+      summary: List all users
+      description: >
+        Returns all user accounts. CRITICAL: Response never includes
+        password_hash, api_key, or failed_login_count fields.
+      operationId: listUsers
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Insufficient privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [users]
+      summary: Create a new user
+      description: >
+        Creates a new user account. Password policy requires minimum 8
+        characters with at least 1 uppercase letter, 1 lowercase letter,
+        and 1 digit.
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Insufficient privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: User with this user_id already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error (password policy, missing fields)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/users/{user_id}:
+    get:
+      tags: [users]
+      summary: Get user by ID
+      description: >
+        Returns user account details. Never includes password_hash or api_key.
+      operationId: getUser
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          description: Unique user identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [users]
+      summary: Update user
+      description: >
+        Updates user account details. Does NOT allow password changes —
+        use the change-password endpoint instead.
+      operationId: updateUser
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [users]
+      summary: Delete user
+      description: Permanently deletes a user account and all associated role assignments.
+      operationId: deleteUser
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: User deleted successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/users/{user_id}/change-password:
+    put:
+      tags: [users]
+      summary: Change user password
+      description: >
+        Changes the password for a user account. Requires verification of
+        the current password before accepting the new password.
+      operationId: changePassword
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserChangePassword'
+      responses:
+        '200':
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Password changed successfully
+        '401':
+          description: Authentication required or current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: New password does not meet policy requirements
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/users/{user_id}/api-key:
+    post:
+      tags: [users]
+      summary: Generate API key (F-304)
+      description: >
+        Generates a new API key for the specified user. The API key is
+        returned ONLY at generation time and cannot be retrieved later.
+      operationId: generateApiKey
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: API key generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserApiKey'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [users]
+      summary: Revoke API key
+      description: Revokes the API key for the specified user.
+      operationId: revokeApiKey
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: API key revoked successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found or no API key exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Role Endpoints (F-501-RQ-003, F-301)
+  # ──────────────────────────────────────────────
+  /api/v1/security/roles:
+    get:
+      tags: [roles]
+      summary: List all roles
+      description: >
+        Returns all configured roles with their associated privilege lists.
+        Optionally filter by source (internal or external).
+      operationId: listRoles
+      parameters:
+        - name: source
+          in: query
+          required: false
+          description: Filter by role source
+          schema:
+            type: string
+            enum: [internal, external]
+      responses:
+        '200':
+          description: List of roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Role'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [roles]
+      summary: Create a new role
+      description: Creates a new role with the specified privileges.
+      operationId: createRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleCreate'
+      responses:
+        '201':
+          description: Role created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Role with this ID already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/roles/{role_id}:
+    get:
+      tags: [roles]
+      summary: Get role by ID
+      description: Returns a single role with its privilege list.
+      operationId: getRole
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Role details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Role not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [roles]
+      summary: Update role
+      description: >
+        Updates an existing role. Built-in roles (nx-admin, nx-anonymous)
+        cannot be modified.
+      operationId: updateRole
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleCreate'
+      responses:
+        '200':
+          description: Role updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Cannot modify built-in roles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Role not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [roles]
+      summary: Delete role
+      description: >
+        Deletes a role. Built-in roles (nx-admin, nx-anonymous) cannot
+        be deleted.
+      operationId: deleteRole
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Role deleted successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Cannot delete built-in roles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Role not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/roles/{role_id}/users:
+    put:
+      tags: [roles]
+      summary: Bulk assign users to role
+      description: Replaces the set of users assigned to a role.
+      operationId: bulkAssignUsersToRole
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleBulkAssignment'
+      responses:
+        '200':
+          description: Users assigned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Role not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/roles/{role_id}/users/{user_id}:
+    post:
+      tags: [roles]
+      summary: Assign user to role
+      description: Assigns a single user to a role.
+      operationId: assignUserToRole
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User assigned to role
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: User assigned to role successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Role or user not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [roles]
+      summary: Remove user from role
+      description: Removes a user assignment from a role.
+      operationId: removeUserFromRole
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: User removed from role
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Role or user not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Privilege Endpoints (F-501-RQ-003, F-301)
+  # ──────────────────────────────────────────────
+  /api/v1/security/privileges:
+    get:
+      tags: [privileges]
+      summary: List all privileges
+      description: >
+        Returns all configured privileges. Optionally filter by privilege type.
+        Five types are supported: application, repository-admin, repository-view,
+        repository-content-selector, and wildcard.
+      operationId: listPrivileges
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: Filter by privilege type
+          schema:
+            $ref: '#/components/schemas/PrivilegeType'
+      responses:
+        '200':
+          description: List of privileges
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Privilege'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [privileges]
+      summary: Create a new privilege
+      description: >
+        Creates a new privilege descriptor. Type-specific properties vary
+        by privilege type.
+      operationId: createPrivilege
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrivilegeCreate'
+      responses:
+        '201':
+          description: Privilege created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Privilege'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Privilege with this ID already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/privileges/{privilege_id}:
+    get:
+      tags: [privileges]
+      summary: Get privilege by ID
+      description: Returns a single privilege descriptor.
+      operationId: getPrivilege
+      parameters:
+        - name: privilege_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Privilege details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Privilege'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Privilege not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [privileges]
+      summary: Update privilege
+      description: >
+        Updates an existing privilege. Built-in privileges cannot be modified.
+      operationId: updatePrivilege
+      parameters:
+        - name: privilege_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrivilegeCreate'
+      responses:
+        '200':
+          description: Privilege updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Privilege'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Cannot modify built-in privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Privilege not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [privileges]
+      summary: Delete privilege
+      description: >
+        Deletes a privilege. Returns 409 Conflict if the privilege is
+        currently in use by any role.
+      operationId: deletePrivilege
+      parameters:
+        - name: privilege_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Privilege deleted successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Privilege not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Privilege is in use by one or more roles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Content Selector Endpoints (F-301)
+  # ──────────────────────────────────────────────
+  /api/v1/security/content-selectors:
+    get:
+      tags: [privileges]
+      summary: List all content selectors
+      description: Returns all configured content selector expressions.
+      operationId: listContentSelectors
+      responses:
+        '200':
+          description: List of content selectors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ContentSelector'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [privileges]
+      summary: Create a content selector
+      description: >
+        Creates a new content selector with a CSEL (Content Selector
+        Expression Language) expression for sub-repository access control.
+      operationId: createContentSelector
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContentSelectorCreate'
+      responses:
+        '201':
+          description: Content selector created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentSelector'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Content selector with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/content-selectors/{selector_id}:
+    put:
+      tags: [privileges]
+      summary: Update content selector
+      description: Updates an existing content selector expression.
+      operationId: updateContentSelector
+      parameters:
+        - name: selector_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContentSelectorCreate'
+      responses:
+        '200':
+          description: Content selector updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentSelector'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Content selector not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [privileges]
+      summary: Delete content selector
+      description: Deletes a content selector.
+      operationId: deleteContentSelector
+      parameters:
+        - name: selector_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Content selector deleted
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Content selector not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # SSL/TLS Security Endpoints (F-302)
+  # ──────────────────────────────────────────────
+  /api/v1/security/ssl/truststore:
+    get:
+      tags: [security]
+      summary: List trusted certificates
+      description: >
+        Returns all certificates in the trusted certificate store. Never
+        includes private keys in the response.
+      operationId: listTrustedCertificates
+      responses:
+        '200':
+          description: List of trusted certificates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CertificateInfo'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [security]
+      summary: Add trusted certificate
+      description: >
+        Adds a PEM-encoded certificate to the trusted certificate store.
+      operationId: addTrustedCertificate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pem_certificate:
+                  type: string
+                  description: PEM-encoded X.509 certificate
+              required:
+                - pem_certificate
+      responses:
+        '201':
+          description: Certificate added to trust store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateInfo'
+        '400':
+          description: Invalid certificate format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/ssl/truststore/{fingerprint}:
+    delete:
+      tags: [security]
+      summary: Remove trusted certificate
+      description: >
+        Removes a certificate from the trust store by its SHA-256 fingerprint.
+      operationId: removeTrustedCertificate
+      parameters:
+        - name: fingerprint
+          in: path
+          required: true
+          description: SHA-256 fingerprint of the certificate to remove
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Certificate removed from trust store
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Certificate not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/ssl/certificate:
+    get:
+      tags: [security]
+      summary: Retrieve remote server certificate
+      description: >
+        Connects to a remote host and retrieves its SSL certificate for
+        review before adding to the trust store.
+      operationId: getRemoteCertificate
+      parameters:
+        - name: host
+          in: query
+          required: true
+          description: Remote server hostname
+          schema:
+            type: string
+        - name: port
+          in: query
+          required: false
+          description: Remote server port (default 443)
+          schema:
+            type: integer
+            default: 443
+      responses:
+        '200':
+          description: Remote server certificate information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateInfo'
+        '400':
+          description: Unable to connect to remote host
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/security/ssl/ldap:
+    put:
+      tags: [security]
+      summary: Configure LDAP SSL settings
+      description: >
+        Configures SSL/TLS settings for LDAP directory integration
+        including certificate verification and protocol settings.
+      operationId: configureLdapSsl
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                protocol:
+                  type: string
+                  enum: [ldaps, starttls]
+                  description: LDAP SSL protocol
+                verify_certificate:
+                  type: boolean
+                  default: true
+                  description: Whether to verify the LDAP server certificate
+                trusted_certificate_pem:
+                  type: string
+                  nullable: true
+                  description: PEM-encoded certificate to trust for LDAP connections
+      responses:
+        '200':
+          description: LDAP SSL settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: LDAP SSL configuration updated successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Invalid configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Task Endpoints (F-402, F-501-RQ-004)
+  # ──────────────────────────────────────────────
+  /api/v1/tasks:
+    get:
+      tags: [tasks]
+      summary: List task definitions
+      description: >
+        Returns all scheduled task definitions. Optionally filter by task type.
+      operationId: listTasks
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: Filter by task type (e.g., repository.cleanup, blobstore.compact)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of task definitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskDefinition'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [tasks]
+      summary: Create a new scheduled task
+      description: >
+        Creates a new task definition with cron scheduling. Supports standard
+        5-field cron expressions. Task types include repository.cleanup,
+        blobstore.compact, repository.rebuild-index, and more.
+      operationId: createTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreate'
+      responses:
+        '201':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinition'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error (invalid cron expression, unknown task type)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/tasks/{task_id}:
+    get:
+      tags: [tasks]
+      summary: Get task definition
+      description: Returns a single task definition with its configuration.
+      operationId: getTask
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task definition details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinition'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [tasks]
+      summary: Update task definition
+      description: Updates an existing task definition including schedule and configuration.
+      operationId: updateTask
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreate'
+      responses:
+        '200':
+          description: Task updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinition'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [tasks]
+      summary: Delete task definition
+      description: Permanently deletes a scheduled task definition.
+      operationId: deleteTask
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Task deleted successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/tasks/{task_id}/run:
+    post:
+      tags: [tasks]
+      summary: Run task immediately
+      description: >
+        Triggers immediate execution of a task regardless of its cron
+        schedule. Returns 202 Accepted as execution is asynchronous.
+      operationId: runTask
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Task execution initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Task execution initiated
+                  execution_id:
+                    type: string
+                    description: Execution tracking identifier
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/tasks/{task_id}/stop:
+    post:
+      tags: [tasks]
+      summary: Stop running task
+      description: Requests cancellation of a currently running task execution.
+      operationId: stopTask
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task stop requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Task stop requested
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/tasks/{task_id}/executions:
+    get:
+      tags: [tasks]
+      summary: Get task execution history
+      description: >
+        Returns the execution history for a specific task including status,
+        duration, and error details.
+      operationId: getTaskExecutions
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task execution history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskExecution'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # System Endpoints (F-404, F-501-RQ-004)
+  # ──────────────────────────────────────────────
+  /api/v1/system/status:
+    get:
+      tags: [system]
+      summary: Get system status
+      description: >
+        Returns overall system status including version information, uptime,
+        node identifier, database type, Elasticsearch availability, and
+        aggregate counts of resources.
+      operationId: getSystemStatus
+      responses:
+        '200':
+          description: System status information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/system/config:
+    get:
+      tags: [system]
+      summary: List system configuration values
+      description: >
+        Returns system configuration key-value pairs. Optionally filter
+        by category. Sensitive values (containing password, secret, token,
+        or key in the key name) are automatically masked.
+      operationId: listSystemConfig
+      parameters:
+        - name: category
+          in: query
+          required: false
+          description: Filter by configuration category
+          schema:
+            type: string
+            enum: [security, http, system, email, repository, cleanup, scheduling]
+      responses:
+        '200':
+          description: List of system configuration values
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SystemConfig'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/system/config/{key}:
+    get:
+      tags: [system]
+      summary: Get single configuration value
+      description: >
+        Returns a single configuration value by key. Sensitive values are
+        masked in the response.
+      operationId: getSystemConfigValue
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: Configuration key
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Configuration value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemConfig'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Configuration key not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [system]
+      summary: Update configuration value
+      description: >
+        Updates a system configuration value. Emits a CONFIG_CHANGED event
+        for downstream consumers.
+      operationId: updateSystemConfigValue
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemConfigUpdate'
+      responses:
+        '200':
+          description: Configuration value updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemConfig'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Configuration key not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Invalid configuration value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/system/support-zip:
+    post:
+      tags: [system]
+      summary: Generate support ZIP (F-403)
+      description: >
+        Generates a diagnostic support ZIP bundle containing sanitized
+        system configuration, application logs, thread dump, database
+        metrics, and BlobStore metrics. Sensitive values are automatically
+        redacted.
+      operationId: generateSupportZip
+      responses:
+        '200':
+          description: Support ZIP file download
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              description: ZIP file attachment
+              schema:
+                type: string
+                example: attachment; filename=support-bundle.zip
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Insufficient privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/system/license:
+    get:
+      tags: [system]
+      summary: Get license information
+      description: >
+        Returns the current license details including product name,
+        edition (OSS or PRO), license type, available features,
+        expiration date, and validity status.
+      operationId: getLicense
+      responses:
+        '200':
+          description: License information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseInfo'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/system/config/email/verify:
+    post:
+      tags: [system]
+      summary: Verify email/SMTP configuration
+      description: >
+        Tests the current email/SMTP configuration by attempting to send
+        a test message.
+      operationId: verifyEmailConfig
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recipient:
+                  type: string
+                  format: email
+                  description: Email address to send test message to
+      responses:
+        '200':
+          description: Email configuration verified successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          description: Email configuration is invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # BlobStore Endpoints (F-201, F-202)
+  # ──────────────────────────────────────────────
+  /api/v1/blobstores:
+    get:
+      tags: [blobstores]
+      summary: List all BlobStores
+      description: >
+        Returns all configured BlobStores. S3 credentials are automatically
+        masked in responses.
+      operationId: listBlobStores
+      responses:
+        '200':
+          description: List of BlobStores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BlobStoreConfig'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [blobstores]
+      summary: Create a new BlobStore
+      description: >
+        Creates a new BlobStore of either file (local filesystem) or s3
+        (Amazon S3) type. File type requires a path, S3 type requires
+        bucket, region, accessKeyId, and secretAccessKey.
+      operationId: createBlobStore
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlobStoreCreate'
+      responses:
+        '201':
+          description: BlobStore created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlobStoreConfig'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: BlobStore with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error (missing required config for type)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/blobstores/{blob_store_name}:
+    get:
+      tags: [blobstores]
+      summary: Get BlobStore by name
+      description: >
+        Returns configuration for a single BlobStore. S3 credentials
+        are masked.
+      operationId: getBlobStore
+      parameters:
+        - name: blob_store_name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: BlobStore configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlobStoreConfig'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: BlobStore not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [blobstores]
+      summary: Update BlobStore
+      description: >
+        Updates a BlobStore configuration. The type (file or s3) cannot
+        be changed after creation.
+      operationId: updateBlobStore
+      parameters:
+        - name: blob_store_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlobStoreCreate'
+      responses:
+        '200':
+          description: BlobStore updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlobStoreConfig'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: BlobStore not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [blobstores]
+      summary: Delete BlobStore
+      description: >
+        Deletes a BlobStore. Returns 409 Conflict if the BlobStore is
+        currently in use by any repository.
+      operationId: deleteBlobStore
+      parameters:
+        - name: blob_store_name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: BlobStore deleted successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: BlobStore not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: BlobStore is in use by one or more repositories
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/blobstores/{blob_store_name}/quota:
+    put:
+      tags: [blobstores]
+      summary: Set BlobStore storage quota
+      description: >
+        Configures a storage quota for a BlobStore. Supported quota types
+        are spaceUsedQuota and spaceRemainingQuota.
+      operationId: setBlobStoreQuota
+      parameters:
+        - name: blob_store_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                quota_type:
+                  type: string
+                  enum: [spaceUsedQuota, spaceRemainingQuota]
+                  description: Type of quota to set
+                limit:
+                  type: integer
+                  format: int64
+                  description: Quota limit in bytes
+              required:
+                - quota_type
+                - limit
+      responses:
+        '200':
+          description: Quota set successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlobStoreConfig'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: BlobStore not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/blobstores/{blob_store_name}/metrics:
+    get:
+      tags: [blobstores]
+      summary: Get BlobStore storage metrics
+      description: >
+        Returns storage metrics for a BlobStore including total size,
+        blob count, available space, and usage percentage.
+      operationId: getBlobStoreMetrics
+      parameters:
+        - name: blob_store_name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: BlobStore storage metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlobStoreMetrics'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: BlobStore not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Cleanup Policy Endpoints (F-204)
+  # ──────────────────────────────────────────────
+  /api/v1/cleanup-policies:
+    get:
+      tags: [cleanup]
+      summary: List cleanup policies
+      description: Returns all configured cleanup policies.
+      operationId: listCleanupPolicies
+      responses:
+        '200':
+          description: List of cleanup policies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CleanupPolicy'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [cleanup]
+      summary: Create a cleanup policy
+      description: >
+        Creates a new cleanup policy with format-specific criteria including
+        lastBlobUpdated, lastDownloaded, isPrerelease, and regex patterns.
+      operationId: createCleanupPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleanupPolicyCreate'
+      responses:
+        '201':
+          description: Cleanup policy created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupPolicy'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Policy with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/cleanup-policies/{policy_id}:
+    get:
+      tags: [cleanup]
+      summary: Get cleanup policy
+      description: Returns a single cleanup policy by ID.
+      operationId: getCleanupPolicy
+      parameters:
+        - name: policy_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cleanup policy details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupPolicy'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Cleanup policy not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [cleanup]
+      summary: Update cleanup policy
+      description: Updates an existing cleanup policy.
+      operationId: updateCleanupPolicy
+      parameters:
+        - name: policy_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleanupPolicyCreate'
+      responses:
+        '200':
+          description: Cleanup policy updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupPolicy'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Cleanup policy not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [cleanup]
+      summary: Delete cleanup policy
+      description: Deletes a cleanup policy.
+      operationId: deleteCleanupPolicy
+      parameters:
+        - name: policy_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Cleanup policy deleted
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Cleanup policy not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/cleanup-policies/{policy_id}/preview:
+    post:
+      tags: [cleanup]
+      summary: Preview cleanup policy results
+      description: >
+        Performs a dry-run evaluation of the cleanup policy and returns
+        the projected impact without actually deleting any content.
+      operationId: previewCleanupPolicy
+      parameters:
+        - name: policy_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cleanup preview results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupPreview'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Cleanup policy not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/cleanup-policies/run:
+    post:
+      tags: [cleanup]
+      summary: Trigger cleanup evaluation
+      description: >
+        Triggers asynchronous execution of cleanup policies. Optionally
+        limit to a specific repository.
+      operationId: runCleanup
+      parameters:
+        - name: repository
+          in: query
+          required: false
+          description: Limit cleanup to a specific repository
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Cleanup evaluation initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Cleanup evaluation initiated
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Script Endpoints (F-502)
+  # ──────────────────────────────────────────────
+  /api/v1/scripts:
+    get:
+      tags: [scripts]
+      summary: List stored scripts
+      description: Returns all stored script definitions.
+      operationId: listScripts
+      responses:
+        '200':
+          description: List of scripts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Script'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [scripts]
+      summary: Create or update a script
+      description: >
+        Creates a new script or updates an existing one. Scripts are
+        stored server-side and can be executed via the run endpoint.
+      operationId: createScript
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScriptCreate'
+      responses:
+        '204':
+          description: Script created or updated successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Insufficient privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/scripts/{script_name}:
+    get:
+      tags: [scripts]
+      summary: Get script by name
+      description: Returns a single script definition.
+      operationId: getScript
+      parameters:
+        - name: script_name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Script details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Script'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Script not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [scripts]
+      summary: Delete script
+      description: Deletes a stored script.
+      operationId: deleteScript
+      parameters:
+        - name: script_name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Script deleted successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Script not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/scripts/{script_name}/run:
+    post:
+      tags: [scripts]
+      summary: Execute a script
+      description: >
+        Executes a stored script in a sandboxed environment with a
+        configurable timeout. Optionally accepts JSON arguments.
+      operationId: runScript
+      parameters:
+        - name: script_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Optional JSON arguments passed to the script
+              additionalProperties: true
+      responses:
+        '200':
+          description: Script execution result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptResult'
+        '400':
+          description: Script execution error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Script not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Script execution failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────
+  # Webhook Endpoints (F-503)
+  # ──────────────────────────────────────────────
+  /api/v1/webhooks:
+    get:
+      tags: [webhooks]
+      summary: List webhooks
+      description: Returns all configured webhook subscriptions.
+      operationId: listWebhooks
+      responses:
+        '200':
+          description: List of webhooks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Webhook'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [webhooks]
+      summary: Create a webhook
+      description: >
+        Creates a new webhook subscription for specified event types.
+        Supported events include repository.created, repository.updated,
+        repository.deleted, component.uploaded, component.deleted, and
+        asset.downloaded.
+      operationId: createWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookCreate'
+      responses:
+        '201':
+          description: Webhook created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/webhooks/{webhook_id}:
+    get:
+      tags: [webhooks]
+      summary: Get webhook by ID
+      description: >
+        Returns a single webhook subscription. The secret_key is masked
+        (only first and last 4 characters are shown).
+      operationId: getWebhook
+      parameters:
+        - name: webhook_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Webhook details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Webhook not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [webhooks]
+      summary: Update webhook
+      description: Updates an existing webhook subscription.
+      operationId: updateWebhook
+      parameters:
+        - name: webhook_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookCreate'
+      responses:
+        '200':
+          description: Webhook updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Webhook not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [webhooks]
+      summary: Delete webhook
+      description: Deletes a webhook subscription.
+      operationId: deleteWebhook
+      parameters:
+        - name: webhook_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Webhook deleted successfully
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Webhook not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/webhooks/{webhook_id}/test:
+    post:
+      tags: [webhooks]
+      summary: Send test webhook payload
+      description: >
+        Sends a test payload to the webhook URL and returns the delivery
+        result including HTTP status code, response body, and duration.
+      operationId: testWebhook
+      parameters:
+        - name: webhook_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Test delivery result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDelivery'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Webhook not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/webhooks/{webhook_id}/deliveries:
+    get:
+      tags: [webhooks]
+      summary: Get webhook delivery history
+      description: >
+        Returns the delivery history for a webhook including timestamps,
+        HTTP status codes, response bodies, and durations.
+      operationId: getWebhookDeliveries
+      parameters:
+        - name: webhook_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Webhook delivery history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WebhookDelivery'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Webhook not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+# ════════════════════════════════════════════════
+# Components Section
+# ════════════════════════════════════════════════
+components:
+
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: Local username/password authentication (F-301)
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token authentication (F-301)
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: NX-ANTI-CSRF-TOKEN
+      description: API key authentication (F-304)
+
+  schemas:
+
+    # ──────────────────────────────────────────
+    # Common / Shared Schemas
+    # ──────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      description: Standard error response returned by all endpoints
+      properties:
+        message:
+          type: string
+          description: Human-readable error message
+          example: Resource not found
+        status:
+          type: integer
+          description: HTTP status code
+          example: 404
+      required:
+        - message
+        - status
+
+    PaginatedResponse:
+      type: object
+      description: Generic paginated response wrapper
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+          description: Array of result items
+        continuationToken:
+          type: string
+          nullable: true
+          description: >
+            Token to retrieve the next page of results.
+            Null when no more pages are available.
+
+    # ──────────────────────────────────────────
+    # Enum Schemas
+    # ──────────────────────────────────────────
+    RepositoryFormat:
+      type: string
+      description: Supported repository formats (F-101)
+      enum:
+        - maven2
+        - npm
+        - docker
+        - nuget
+        - pypi
+        - apt
+        - raw
+
+    RepositoryType:
+      type: string
+      description: Repository type definitions (F-102)
+      enum:
+        - hosted
+        - proxy
+        - group
+
+    UserStatus:
+      type: string
+      description: User account status values
+      enum:
+        - active
+        - locked
+        - disabled
+        - changepassword
+
+    TaskStatus:
+      type: string
+      description: Task execution status values
+      enum:
+        - waiting
+        - running
+        - ok
+        - failed
+        - canceled
+
+    PrivilegeType:
+      type: string
+      description: Privilege descriptor types (F-301)
+      enum:
+        - application
+        - repository-admin
+        - repository-view
+        - repository-content-selector
+        - wildcard
+
+    HealthStatus:
+      type: string
+      description: Health check status values (F-401)
+      enum:
+        - healthy
+        - degraded
+        - unhealthy
+
+    BlobStoreType:
+      type: string
+      description: BlobStore backend types (F-201, F-202)
+      enum:
+        - file
+        - s3
+
+    WebhookEventType:
+      type: string
+      description: Supported webhook event types (F-503)
+      enum:
+        - repository.created
+        - repository.updated
+        - repository.deleted
+        - component.uploaded
+        - component.deleted
+        - asset.downloaded
+
+    # ──────────────────────────────────────────
+    # Health Schemas (F-401)
+    # ──────────────────────────────────────────
+    CompositeHealthResult:
+      type: object
+      description: Aggregated health status from all registered checks
+      properties:
+        status:
+          $ref: '#/components/schemas/HealthStatus'
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/HealthCheckResult'
+        total_duration_ms:
+          type: number
+          format: double
+          description: Total time to execute all health checks in milliseconds
+        timestamp:
+          type: string
+          format: date-time
+          description: Timestamp of the health check execution
+        node_id:
+          type: string
+          description: Identifier of the node that performed the check
+      required:
+        - status
+        - checks
+        - total_duration_ms
+        - timestamp
+        - node_id
+
+    HealthCheckResult:
+      type: object
+      description: Result of a single health check
+      properties:
+        name:
+          type: string
+          description: Name of the health check (e.g., database, elasticsearch)
+          example: database
+        status:
+          $ref: '#/components/schemas/HealthStatus'
+        message:
+          type: string
+          nullable: true
+          description: Additional status message or error details
+        duration_ms:
+          type: number
+          format: double
+          description: Time to execute this health check in milliseconds
+        critical:
+          type: boolean
+          description: Whether this check is critical to system operation
+      required:
+        - name
+        - status
+        - duration_ms
+        - critical
+
+    SystemInfo:
+      type: object
+      description: Detailed system information (authenticated endpoint)
+      properties:
+        python_version:
+          type: string
+          example: '3.12.3'
+        flask_version:
+          type: string
+          example: '3.1.3'
+        uptime_seconds:
+          type: number
+          format: double
+          description: Application uptime in seconds
+        os_info:
+          type: string
+          description: Operating system information
+          example: Linux 6.1.0-amd64
+        database_type:
+          type: string
+          description: Active database backend
+          enum: [sqlite, postgresql]
+        node_id:
+          type: string
+          description: Unique node identifier
+        started_at:
+          type: string
+          format: date-time
+          description: Application start timestamp
+      required:
+        - python_version
+        - flask_version
+        - uptime_seconds
+        - os_info
+        - database_type
+        - node_id
+        - started_at
+
+    # ──────────────────────────────────────────
+    # Repository Schemas (F-101, F-102)
+    # ──────────────────────────────────────────
+    RepositoryCreate:
+      type: object
+      description: Request schema for creating a new repository
+      properties:
+        name:
+          type: string
+          description: >
+            Unique repository name. Must start with alphanumeric and
+            contain only alphanumeric, dot, underscore, or hyphen.
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'
+          maxLength: 200
+          example: maven-releases
+        format:
+          $ref: '#/components/schemas/RepositoryFormat'
+        type:
+          $ref: '#/components/schemas/RepositoryType'
+        blob_store_name:
+          type: string
+          description: Name of the BlobStore to use for storage
+          example: default
+        online:
+          type: boolean
+          description: Whether the repository should be online
+          default: true
+        attributes:
+          type: object
+          description: >
+            Type-specific configuration attributes. Proxy repositories
+            must include proxy.remoteUrl. Group repositories must include
+            group.memberNames.
+          additionalProperties: true
+          example:
+            proxy:
+              remoteUrl: https://repo1.maven.org/maven2/
+            storage:
+              writePolicy: ALLOW_ONCE
+        routing_rule:
+          type: string
+          nullable: true
+          description: Optional routing rule name
+        cleanup_policies:
+          type: array
+          items:
+            type: string
+          description: List of cleanup policy names applied to this repository
+      required:
+        - name
+        - format
+        - type
+        - blob_store_name
+
+    RepositoryUpdate:
+      type: object
+      description: >
+        Request schema for updating a repository. Name, format, and type
+        are immutable and cannot be changed.
+      properties:
+        online:
+          type: boolean
+          description: Whether the repository should be online
+        blob_store_name:
+          type: string
+          description: Name of the BlobStore to use for storage
+        attributes:
+          type: object
+          description: Type-specific configuration attributes
+          additionalProperties: true
+        routing_rule:
+          type: string
+          nullable: true
+          description: Routing rule name
+        cleanup_policies:
+          type: array
+          items:
+            type: string
+          description: List of cleanup policy names
+
+    RepositoryResponse:
+      type: object
+      description: Repository details returned by API
+      properties:
+        name:
+          type: string
+          example: maven-releases
+        format:
+          $ref: '#/components/schemas/RepositoryFormat'
+        type:
+          $ref: '#/components/schemas/RepositoryType'
+        blob_store_name:
+          type: string
+          example: default
+        online:
+          type: boolean
+        attributes:
+          type: object
+          additionalProperties: true
+        routing_rule:
+          type: string
+          nullable: true
+        cleanup_policies:
+          type: array
+          items:
+            type: string
+        component_count:
+          type: integer
+          description: Total number of components in the repository
+        asset_count:
+          type: integer
+          description: Total number of assets in the repository
+        status:
+          type: string
+          description: Repository lifecycle status
+          example: started
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - name
+        - format
+        - type
+        - blob_store_name
+        - online
+        - status
+        - created_at
+        - updated_at
+
+    # ──────────────────────────────────────────
+    # Component Schemas (F-101, F-103)
+    # ──────────────────────────────────────────
+    Component:
+      type: object
+      description: Component summary within a repository
+      properties:
+        id:
+          type: integer
+          description: Unique component identifier
+        repository_name:
+          type: string
+          description: Repository containing this component
+        namespace:
+          type: string
+          nullable: true
+          description: Component namespace or group (e.g., Maven groupId)
+        name:
+          type: string
+          description: Component name (e.g., Maven artifactId)
+        version:
+          type: string
+          description: Component version
+        format:
+          $ref: '#/components/schemas/RepositoryFormat'
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Format-specific component attributes
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - repository_name
+        - name
+        - version
+        - format
+
+    ComponentDetail:
+      type: object
+      description: Detailed component view with nested assets
+      allOf:
+        - $ref: '#/components/schemas/Component'
+        - type: object
+          properties:
+            assets:
+              type: array
+              items:
+                $ref: '#/components/schemas/AssetResponse'
+              description: All assets associated with this component
+
+    ComponentSearchResult:
+      type: object
+      description: Paginated component listing result
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Component'
+        continuationToken:
+          type: string
+          nullable: true
+          description: Token for retrieving the next page
+
+    ComponentUpload:
+      type: object
+      description: Multipart form data for component upload
+      properties:
+        repository_name:
+          type: string
+          description: Target hosted repository
+        namespace:
+          type: string
+          nullable: true
+          description: Component namespace or group
+        name:
+          type: string
+          description: Component name
+        version:
+          type: string
+          description: Component version
+        file:
+          type: string
+          format: binary
+          description: Primary asset file
+      required:
+        - repository_name
+        - name
+        - version
+        - file
+
+    # ──────────────────────────────────────────
+    # Asset Schemas
+    # ──────────────────────────────────────────
+    AssetResponse:
+      type: object
+      description: Asset metadata response
+      properties:
+        id:
+          type: integer
+          description: Unique asset identifier
+        component_id:
+          type: integer
+          nullable: true
+          description: ID of the parent component
+        repository_name:
+          type: string
+          description: Repository containing this asset
+        path:
+          type: string
+          description: Asset path within the repository
+          example: /org/example/artifact/1.0/artifact-1.0.jar
+        content_type:
+          type: string
+          description: MIME type of the asset
+          example: application/java-archive
+        size:
+          type: integer
+          format: int64
+          description: Asset size in bytes
+        checksums:
+          type: object
+          properties:
+            sha1:
+              type: string
+              description: SHA-1 checksum (40 hex chars)
+              example: da39a3ee5e6b4b0d3255bfef95601890afd80709
+            sha256:
+              type: string
+              description: SHA-256 checksum (64 hex chars)
+            md5:
+              type: string
+              description: MD5 checksum (32 hex chars)
+        last_downloaded:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of last download
+        download_url:
+          type: string
+          format: uri
+          description: URL to download this asset
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Format-specific asset attributes
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - repository_name
+        - path
+        - content_type
+        - size
+        - checksums
+
+    # ──────────────────────────────────────────
+    # User Schemas (F-301)
+    # ──────────────────────────────────────────
+    UserCreate:
+      type: object
+      description: >
+        Request to create a new user. Password must meet policy requirements:
+        minimum 8 characters, at least 1 uppercase, 1 lowercase, 1 digit.
+      properties:
+        user_id:
+          type: string
+          description: Unique user identifier (login name)
+          example: jdoe
+        password:
+          type: string
+          format: password
+          description: User password (min 8 chars, 1 upper, 1 lower, 1 digit)
+          minLength: 8
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        email:
+          type: string
+          format: email
+          description: User email address
+        first_name:
+          type: string
+          description: User first name
+        last_name:
+          type: string
+          description: User last name
+        roles:
+          type: array
+          items:
+            type: string
+          description: List of role IDs to assign to the user
+      required:
+        - user_id
+        - password
+
+    UserUpdate:
+      type: object
+      description: >
+        Request to update a user. Does not allow password changes;
+        use the change-password endpoint instead.
+      properties:
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+
+    UserResponse:
+      type: object
+      description: >
+        User account details. CRITICAL: Never includes password_hash,
+        api_key, or failed_login_count fields.
+      properties:
+        user_id:
+          type: string
+          example: jdoe
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+          description: Assigned role IDs
+        last_login:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of last successful login
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - user_id
+        - status
+
+    UserChangePassword:
+      type: object
+      description: Request to change a user password
+      properties:
+        current_password:
+          type: string
+          format: password
+          description: Current password for verification
+        new_password:
+          type: string
+          format: password
+          description: New password (min 8 chars, 1 upper, 1 lower, 1 digit)
+          minLength: 8
+      required:
+        - current_password
+        - new_password
+
+    UserApiKey:
+      type: object
+      description: >
+        Generated API key response. The key is shown ONLY at generation
+        time and cannot be retrieved later.
+      properties:
+        api_key:
+          type: string
+          description: Generated API key (shown only once)
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - api_key
+        - created_at
+
+    # ──────────────────────────────────────────
+    # Role Schemas (F-301)
+    # ──────────────────────────────────────────
+    Role:
+      type: object
+      description: Role definition with associated privileges
+      properties:
+        role_id:
+          type: string
+          description: Unique role identifier
+          example: nx-admin
+        name:
+          type: string
+          description: Human-readable role name
+          example: Nexus Administrator
+        description:
+          type: string
+          nullable: true
+          description: Role description
+        privileges:
+          type: array
+          items:
+            type: string
+          description: List of privilege IDs assigned to this role
+        source:
+          type: string
+          enum: [internal, external]
+          description: Whether the role is defined internally or from external source
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - role_id
+        - name
+        - privileges
+        - source
+
+    RoleCreate:
+      type: object
+      description: Request to create or update a role
+      properties:
+        role_id:
+          type: string
+          description: Unique role identifier
+        name:
+          type: string
+          description: Human-readable role name
+        description:
+          type: string
+          nullable: true
+        privileges:
+          type: array
+          items:
+            type: string
+          description: List of privilege IDs
+        source:
+          type: string
+          enum: [internal, external]
+          default: internal
+      required:
+        - role_id
+        - name
+        - privileges
+
+    RoleAssignment:
+      type: object
+      description: Role-to-user assignment
+      properties:
+        role_id:
+          type: string
+        user_id:
+          type: string
+      required:
+        - role_id
+        - user_id
+
+    RoleBulkAssignment:
+      type: object
+      description: Bulk user assignment to a role
+      properties:
+        user_ids:
+          type: array
+          items:
+            type: string
+          description: List of user IDs to assign to the role
+      required:
+        - user_ids
+
+    # ──────────────────────────────────────────
+    # Privilege Schemas (F-301)
+    # ──────────────────────────────────────────
+    Privilege:
+      type: object
+      description: >
+        Privilege descriptor. Five types supported: application,
+        repository-admin, repository-view, repository-content-selector,
+        and wildcard.
+      properties:
+        privilege_id:
+          type: string
+          description: Unique privilege identifier
+        type:
+          $ref: '#/components/schemas/PrivilegeType'
+        name:
+          type: string
+          description: Human-readable privilege name
+        description:
+          type: string
+          nullable: true
+        properties:
+          type: object
+          description: >
+            Type-specific privilege properties. For repository types,
+            includes format, repository, and actions. For
+            repository-content-selector, includes contentSelector.
+          additionalProperties: true
+        read_only:
+          type: boolean
+          description: Whether this is a built-in privilege
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - privilege_id
+        - type
+        - name
+
+    PrivilegeCreate:
+      type: object
+      description: Request to create or update a privilege
+      properties:
+        privilege_id:
+          type: string
+        type:
+          $ref: '#/components/schemas/PrivilegeType'
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        properties:
+          type: object
+          additionalProperties: true
+          description: >
+            Type-specific properties. For application: domain, actions.
+            For repository-admin: format, repository.
+            For repository-view: format, repository, actions.
+            For repository-content-selector: format, repository,
+            contentSelector, actions. For wildcard: pattern.
+      required:
+        - privilege_id
+        - type
+        - name
+
+    # ──────────────────────────────────────────
+    # Content Selector Schemas (F-301)
+    # ──────────────────────────────────────────
+    ContentSelector:
+      type: object
+      description: Content selector for sub-repository access control
+      properties:
+        selector_id:
+          type: string
+          description: Unique content selector identifier
+        name:
+          type: string
+          description: Human-readable selector name
+        type:
+          type: string
+          default: csel
+          description: Selector type (always csel)
+        expression:
+          type: string
+          description: CSEL expression for path matching
+          example: 'path =^ "/org/example/"'
+        description:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - selector_id
+        - name
+        - type
+        - expression
+
+    ContentSelectorCreate:
+      type: object
+      description: Request to create or update a content selector
+      properties:
+        name:
+          type: string
+          description: Content selector name
+        type:
+          type: string
+          default: csel
+        expression:
+          type: string
+          description: CSEL expression
+        description:
+          type: string
+          nullable: true
+      required:
+        - name
+        - expression
+
+    # ──────────────────────────────────────────
+    # Task Schemas (F-402)
+    # ──────────────────────────────────────────
+    TaskCreate:
+      type: object
+      description: >
+        Request to create a scheduled task. Supports standard 5-field
+        cron expressions for scheduling.
+      properties:
+        type:
+          type: string
+          description: >
+            Task type identifier (e.g., repository.cleanup,
+            blobstore.compact, repository.rebuild-index)
+          example: repository.cleanup
+        name:
+          type: string
+          description: Human-readable task name
+          example: Nightly Cleanup
+        cron_expression:
+          type: string
+          description: Standard 5-field cron expression
+          example: '0 2 * * *'
+        enabled:
+          type: boolean
+          default: true
+          description: Whether the task is enabled for scheduled execution
+        configuration:
+          type: object
+          additionalProperties: true
+          description: Task-specific configuration parameters
+      required:
+        - type
+        - name
+        - cron_expression
+
+    TaskDefinition:
+      type: object
+      description: Complete task definition with scheduling details
+      properties:
+        task_id:
+          type: string
+          description: Unique task identifier
+        type:
+          type: string
+          description: Task type identifier
+        name:
+          type: string
+          description: Human-readable task name
+        cron_expression:
+          type: string
+          description: Cron schedule expression
+        enabled:
+          type: boolean
+          description: Whether the task is enabled
+        configuration:
+          type: object
+          additionalProperties: true
+          description: Task-specific configuration
+        last_run:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of last execution
+        last_status:
+          $ref: '#/components/schemas/TaskStatus'
+        next_run:
+          type: string
+          format: date-time
+          nullable: true
+          description: Scheduled time of next execution
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - task_id
+        - type
+        - name
+        - cron_expression
+        - enabled
+
+    TaskExecution:
+      type: object
+      description: Record of a single task execution
+      properties:
+        execution_id:
+          type: string
+          description: Unique execution identifier
+        task_id:
+          type: string
+          description: ID of the task that was executed
+        start_time:
+          type: string
+          format: date-time
+          description: Execution start timestamp
+        end_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Execution end timestamp (null if still running)
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        duration_ms:
+          type: integer
+          format: int64
+          nullable: true
+          description: Execution duration in milliseconds
+        progress:
+          type: number
+          format: double
+          nullable: true
+          description: Execution progress (0.0 to 1.0)
+          minimum: 0
+          maximum: 1
+        error_message:
+          type: string
+          nullable: true
+          description: Error details if execution failed
+      required:
+        - execution_id
+        - task_id
+        - start_time
+        - status
+
+    # ──────────────────────────────────────────
+    # System Schemas (F-404)
+    # ──────────────────────────────────────────
+    SystemConfig:
+      type: object
+      description: System configuration key-value pair
+      properties:
+        key:
+          type: string
+          description: Configuration key
+          example: system.baseUrl
+        value:
+          type: string
+          description: >
+            Configuration value. Sensitive values (containing password,
+            secret, token, or key in the key name) are automatically masked.
+          example: https://nexus.example.com
+        category:
+          type: string
+          description: Configuration category
+          enum: [security, http, system, email, repository, cleanup, scheduling]
+        description:
+          type: string
+          nullable: true
+          description: Human-readable description of the configuration
+      required:
+        - key
+        - value
+        - category
+
+    SystemConfigUpdate:
+      type: object
+      description: Request to update a system configuration value
+      properties:
+        value:
+          type: string
+          description: New configuration value
+        description:
+          type: string
+          nullable: true
+          description: Optional updated description
+      required:
+        - value
+
+    SystemStatus:
+      type: object
+      description: Comprehensive system status information
+      properties:
+        version:
+          type: string
+          description: Application version
+          example: '1.0.0'
+        edition:
+          type: string
+          description: Product edition
+          enum: [OSS, PRO]
+          example: OSS
+        uptime_seconds:
+          type: number
+          format: double
+          description: Application uptime in seconds
+        started_at:
+          type: string
+          format: date-time
+          description: Application start timestamp
+        node_id:
+          type: string
+          description: Unique node identifier
+        python_version:
+          type: string
+          example: '3.12.3'
+        flask_version:
+          type: string
+          example: '3.1.3'
+        database_type:
+          type: string
+          enum: [sqlite, postgresql]
+        elasticsearch_available:
+          type: boolean
+          description: Whether Elasticsearch is connected and available
+        counts:
+          type: object
+          properties:
+            blob_stores:
+              type: integer
+            repositories:
+              type: integer
+            components:
+              type: integer
+            assets:
+              type: integer
+            users:
+              type: integer
+      required:
+        - version
+        - edition
+        - uptime_seconds
+        - started_at
+        - node_id
+        - python_version
+        - flask_version
+        - database_type
+        - elasticsearch_available
+        - counts
+
+    LicenseInfo:
+      type: object
+      description: Product license information
+      properties:
+        product_name:
+          type: string
+          example: Sonatype Nexus Repository Manager
+        edition:
+          type: string
+          enum: [OSS, PRO]
+        license_type:
+          type: string
+          description: Type of license
+          example: Open Source
+        features:
+          type: array
+          items:
+            type: string
+          description: List of available features
+        expiration_date:
+          type: string
+          format: date-time
+          nullable: true
+          description: License expiration date (null for perpetual)
+        is_valid:
+          type: boolean
+          description: Whether the license is currently valid
+      required:
+        - product_name
+        - edition
+        - license_type
+        - features
+        - is_valid
+
+    # ──────────────────────────────────────────
+    # Search Schemas (F-103)
+    # ──────────────────────────────────────────
+    SearchResult:
+      type: object
+      description: Search result with pagination and facets
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResultItem'
+          description: Array of matching items
+        total_count:
+          type: integer
+          description: Total number of matching items
+        page:
+          type: integer
+          description: Current page number (zero-based)
+        page_size:
+          type: integer
+          description: Number of items per page
+        continuation_token:
+          type: string
+          nullable: true
+          description: Token for retrieving additional results
+        facets:
+          type: object
+          description: Aggregation counts by field
+          properties:
+            format:
+              type: object
+              additionalProperties:
+                type: integer
+              description: Count of results per format
+            repository:
+              type: object
+              additionalProperties:
+                type: integer
+              description: Count of results per repository
+      required:
+        - items
+        - total_count
+        - page
+        - page_size
+
+    SearchResultItem:
+      type: object
+      description: Single item in search results
+      properties:
+        id:
+          type: integer
+          description: Component or asset identifier
+        repository_name:
+          type: string
+        format:
+          $ref: '#/components/schemas/RepositoryFormat'
+        namespace:
+          type: string
+          nullable: true
+        name:
+          type: string
+        version:
+          type: string
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResultAsset'
+      required:
+        - id
+        - repository_name
+        - name
+        - version
+
+    SearchResultAsset:
+      type: object
+      description: Asset summary within search results
+      properties:
+        id:
+          type: integer
+        path:
+          type: string
+        content_type:
+          type: string
+        size:
+          type: integer
+          format: int64
+        download_url:
+          type: string
+          format: uri
+
+    # ──────────────────────────────────────────
+    # BlobStore Schemas (F-201, F-202)
+    # ──────────────────────────────────────────
+    BlobStoreConfig:
+      type: object
+      description: >
+        BlobStore configuration. S3 credentials (accessKeyId,
+        secretAccessKey) are masked in responses.
+      properties:
+        blob_store_name:
+          type: string
+          description: Unique BlobStore name
+          example: default
+        type:
+          $ref: '#/components/schemas/BlobStoreType'
+        configuration:
+          type: object
+          description: >
+            Type-specific configuration. For file: path.
+            For S3: bucket, region, accessKeyId (masked),
+            secretAccessKey (masked), prefix, encryption_type.
+          additionalProperties: true
+        total_size:
+          type: integer
+          format: int64
+          description: Total storage size in bytes
+        blob_count:
+          type: integer
+          description: Total number of blobs stored
+        quota:
+          type: object
+          nullable: true
+          properties:
+            quota_type:
+              type: string
+              enum: [spaceUsedQuota, spaceRemainingQuota]
+            limit:
+              type: integer
+              format: int64
+              description: Quota limit in bytes
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - blob_store_name
+        - type
+        - configuration
+
+    BlobStoreCreate:
+      type: object
+      description: >
+        Request to create a BlobStore. File type requires path.
+        S3 type requires bucket, region, accessKeyId, and secretAccessKey.
+      properties:
+        blob_store_name:
+          type: string
+          description: Unique BlobStore name
+        type:
+          $ref: '#/components/schemas/BlobStoreType'
+        configuration:
+          type: object
+          description: >
+            For file type: { path: "/data/blobs" }.
+            For S3 type: { bucket: "my-bucket", region: "us-east-1",
+            accessKeyId: "...", secretAccessKey: "...", prefix: "",
+            encryption_type: "s3ManagedEncryption" }
+          additionalProperties: true
+      required:
+        - blob_store_name
+        - type
+        - configuration
+
+    BlobStoreMetrics:
+      type: object
+      description: Storage metrics for a BlobStore
+      properties:
+        blob_store_name:
+          type: string
+        total_size:
+          type: integer
+          format: int64
+          description: Total storage used in bytes
+        blob_count:
+          type: integer
+          description: Total number of blobs
+        available_space:
+          type: integer
+          format: int64
+          description: Available space in bytes (-1 for unlimited S3)
+        usage_percentage:
+          type: number
+          format: double
+          description: Storage usage as a percentage (0.0 to 100.0)
+          minimum: 0
+          maximum: 100
+      required:
+        - blob_store_name
+        - total_size
+        - blob_count
+        - available_space
+        - usage_percentage
+
+    # ──────────────────────────────────────────
+    # Cleanup Policy Schemas (F-204)
+    # ──────────────────────────────────────────
+    CleanupPolicy:
+      type: object
+      description: Cleanup policy definition with criteria
+      properties:
+        policy_id:
+          type: string
+          description: Unique policy identifier
+        name:
+          type: string
+          description: Human-readable policy name
+          example: Delete old snapshots
+        format:
+          $ref: '#/components/schemas/RepositoryFormat'
+        criteria:
+          type: object
+          description: >
+            Cleanup criteria applied to matching components/assets.
+            All specified criteria are AND-ed together.
+          properties:
+            lastBlobUpdated:
+              type: integer
+              description: >
+                Remove components not updated within this many days
+            lastDownloaded:
+              type: integer
+              description: >
+                Remove components not downloaded within this many days
+            isPrerelease:
+              type: boolean
+              description: >
+                If true, only match pre-release/snapshot versions
+            regex:
+              type: string
+              description: >
+                Regular expression to match component version strings
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - policy_id
+        - name
+        - criteria
+
+    CleanupPolicyCreate:
+      type: object
+      description: Request to create or update a cleanup policy
+      properties:
+        name:
+          type: string
+          description: Policy name
+        format:
+          $ref: '#/components/schemas/RepositoryFormat'
+        criteria:
+          type: object
+          properties:
+            lastBlobUpdated:
+              type: integer
+            lastDownloaded:
+              type: integer
+            isPrerelease:
+              type: boolean
+            regex:
+              type: string
+      required:
+        - name
+        - criteria
+
+    CleanupPreview:
+      type: object
+      description: Preview of cleanup policy impact (dry-run)
+      properties:
+        policy_id:
+          type: string
+        total_components:
+          type: integer
+          description: Number of components that would be affected
+        total_assets:
+          type: integer
+          description: Number of assets that would be affected
+        estimated_space_reclaimed:
+          type: integer
+          format: int64
+          description: Estimated storage space reclaimed in bytes
+      required:
+        - policy_id
+        - total_components
+        - total_assets
+        - estimated_space_reclaimed
+
+    # ──────────────────────────────────────────
+    # Script Schemas (F-502)
+    # ──────────────────────────────────────────
+    Script:
+      type: object
+      description: Stored script definition
+      properties:
+        name:
+          type: string
+          description: Unique script name
+          example: my-cleanup-script
+        type:
+          type: string
+          description: Script language type
+          enum: [python]
+          example: python
+        content:
+          type: string
+          description: Script source code
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - name
+        - type
+        - content
+
+    ScriptCreate:
+      type: object
+      description: Request to create or update a script
+      properties:
+        name:
+          type: string
+          description: Unique script name
+        type:
+          type: string
+          enum: [python]
+          description: Script language type
+        content:
+          type: string
+          description: Script source code
+      required:
+        - name
+        - type
+        - content
+
+    ScriptResult:
+      type: object
+      description: Result of script execution
+      properties:
+        name:
+          type: string
+          description: Name of the executed script
+        result:
+          type: string
+          nullable: true
+          description: JSON-serialized execution result
+        type:
+          type: string
+          enum: [python]
+      required:
+        - name
+        - result
+
+    # ──────────────────────────────────────────
+    # Webhook Schemas (F-503)
+    # ──────────────────────────────────────────
+    Webhook:
+      type: object
+      description: >
+        Webhook subscription. The secret_key is masked in responses
+        (only first and last 4 characters shown).
+      properties:
+        webhook_id:
+          type: string
+          description: Unique webhook identifier
+        name:
+          type: string
+          description: Human-readable webhook name
+        url:
+          type: string
+          format: uri
+          description: Destination URL for webhook payloads
+        event_types:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+          description: Event types this webhook subscribes to
+        secret_key:
+          type: string
+          nullable: true
+          description: >
+            HMAC signing secret (masked in responses — only first/last
+            4 chars visible)
+        content_type:
+          type: string
+          default: application/json
+          description: Content-Type header for webhook payloads
+        enabled:
+          type: boolean
+          description: Whether the webhook is active
+        repository_filter:
+          type: string
+          nullable: true
+          description: Optional repository name filter
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - webhook_id
+        - name
+        - url
+        - event_types
+        - enabled
+
+    WebhookCreate:
+      type: object
+      description: Request to create or update a webhook subscription
+      properties:
+        name:
+          type: string
+          description: Webhook name
+        url:
+          type: string
+          format: uri
+          description: Destination URL
+        event_types:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+          description: List of event types to subscribe to
+          minItems: 1
+        secret_key:
+          type: string
+          nullable: true
+          description: HMAC signing secret for payload verification
+        content_type:
+          type: string
+          default: application/json
+        enabled:
+          type: boolean
+          default: true
+        repository_filter:
+          type: string
+          nullable: true
+          description: Optional repository name filter
+      required:
+        - name
+        - url
+        - event_types
+
+    WebhookDelivery:
+      type: object
+      description: Record of a webhook delivery attempt
+      properties:
+        delivery_id:
+          type: string
+          description: Unique delivery identifier
+        webhook_id:
+          type: string
+        event_type:
+          $ref: '#/components/schemas/WebhookEventType'
+        status_code:
+          type: integer
+          description: HTTP response status code from the target
+        response_body:
+          type: string
+          nullable: true
+          description: Response body from the target (truncated if large)
+        duration_ms:
+          type: integer
+          description: Round-trip delivery time in milliseconds
+        success:
+          type: boolean
+          description: Whether the delivery was successful (2xx response)
+        timestamp:
+          type: string
+          format: date-time
+          description: Delivery attempt timestamp
+        error_message:
+          type: string
+          nullable: true
+          description: Error message if delivery failed
+      required:
+        - delivery_id
+        - webhook_id
+        - event_type
+        - status_code
+        - duration_ms
+        - success
+        - timestamp
+
+    # ──────────────────────────────────────────
+    # Certificate Schemas (F-302)
+    # ──────────────────────────────────────────
+    CertificateInfo:
+      type: object
+      description: >
+        SSL/TLS certificate information. Never includes private key
+        material.
+      properties:
+        subject:
+          type: string
+          description: Certificate subject distinguished name
+          example: CN=nexus.example.com
+        issuer:
+          type: string
+          description: Certificate issuer distinguished name
+          example: CN=Let's Encrypt Authority X3
+        serial_number:
+          type: string
+          description: Certificate serial number in hexadecimal
+        not_before:
+          type: string
+          format: date-time
+          description: Certificate validity start date
+        not_after:
+          type: string
+          format: date-time
+          description: Certificate validity end date (expiration)
+        fingerprint_sha256:
+          type: string
+          description: SHA-256 fingerprint of the certificate
+        fingerprint_sha1:
+          type: string
+          description: SHA-1 fingerprint of the certificate
+        pem:
+          type: string
+          nullable: true
+          description: PEM-encoded certificate (included on retrieval)
+      required:
+        - subject
+        - issuer
+        - serial_number
+        - not_before
+        - not_after
+        - fingerprint_sha256

@@ -1,0 +1,28 @@
+{
+  "architecture": "amd64",
+  "os": "linux",
+  "created": "2024-01-01T00:00:00Z",
+  "config": {
+    "Env": [
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    ],
+    "Cmd": [
+      "/bin/sh"
+    ],
+    "WorkingDir": "",
+    "Labels": {}
+  },
+  "rootfs": {
+    "type": "layers",
+    "diff_ids": [
+      "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+    ]
+  },
+  "history": [
+    {
+      "created": "2024-01-01T00:00:00Z",
+      "created_by": "/bin/sh -c #(nop) ADD file:test in /",
+      "empty_layer": false
+    }
+  ]
+}

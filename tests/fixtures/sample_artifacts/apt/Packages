@@ -1,0 +1,16 @@
+Package: sample
+Version: 1.0.0
+Architecture: amd64
+Maintainer: Test Maintainer <test@example.com>
+Installed-Size: 1
+Filename: pool/main/s/sample/sample_1.0.0_amd64.deb
+Size: 832
+MD5sum: d41d8cd98f00b204e9800998ecf8427e
+SHA1: da39a3ee5e6b4b0d3255bfef95601890afd80709
+SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+Section: utils
+Priority: optional
+Description: Sample Debian package for testing
+ A minimal Debian package used as a test fixture for the Nexus Repository
+ APT format handler.
+
