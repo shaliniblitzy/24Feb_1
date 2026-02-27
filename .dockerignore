@@ -1,0 +1,71 @@
+# =============================================================================
+# .dockerignore - Sonatype Nexus Repository (Python/Flask Backend)
+# =============================================================================
+# Excludes unnecessary files from the Docker build context to reduce image size,
+# improve build performance, and prevent sensitive data from being copied into
+# the container image. The Dockerfile's 'COPY . .' instruction respects these
+# exclusion patterns.
+# =============================================================================
+
+# Version control
+.git
+.gitignore
+
+# Python virtual environments
+venv/
+.venv/
+env/
+.env
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Distribution and packaging artifacts
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Testing and coverage
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.mypy_cache/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Application runtime data (mounted as volumes, not baked into image)
+data/
+logs/
+instance/
+*.db
+*.sqlite3
+
+# Docker-specific
+docker-compose.yml
+docker-compose.override.yml
+Dockerfile
+
+# Documentation (not needed at runtime)
+docs/
+*.md
+!README.md
+
+# Development dependencies file (not needed in production image)
+requirements-dev.txt
+
+# Node.js (if any frontend tooling exists)
+node_modules/
