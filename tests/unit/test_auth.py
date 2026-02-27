@@ -1373,18 +1373,15 @@ class TestLDAPRealm:
     def test_ldap_graceful_when_not_installed(self, app):
         """If python-ldap is unavailable the realm is disabled."""
         with app.app_context():
-            if not LDAP_AVAILABLE:
+            # Temporarily pretend python-ldap is not installed by patching
+            # the module-level flag.  This allows the test to run even when
+            # python-ldap IS available in the environment.
+            with patch(
+                "src.app.auth.realms.ldap_realm.LDAP_AVAILABLE", False
+            ):
                 realm = LDAPRealm()
                 assert realm.is_configured() is False
                 assert realm.supports({"username": "u", "password": "p"}) is False
-            else:
-                # python-ldap IS installed in this environment — the
-                # "not installed" scenario cannot be exercised.  Skip
-                # rather than silently passing with no assertions.
-                pytest.skip(
-                    "python-ldap is installed; cannot test "
-                    "LDAP-unavailable scenario in this environment"
-                )
 
     @patch("src.app.auth.realms.ldap_realm.ldap", create=True)
     def test_ldap_connection_cleanup(self, mock_ldap_mod, app, db_session):
