@@ -54,21 +54,21 @@ classifiers = [
 #   Flask 3.1.3            -> replaces RESTEasy 6.2.7 + Jetty 12.0.5
 #   gunicorn 25.1.0        -> replaces embedded Jetty 12.0.5 HTTP server
 #   SQLAlchemy 2.0.36      -> replaces MyBatis 3.5.15 ORM
-#   marshmallow 3.23.2     -> replaces Jackson 2.16.1 JSON serialization
+#   marshmallow 3.26.2     -> replaces Jackson 2.16.1 JSON serialization
 #   PyJWT 2.10.1           -> replaces Java-JWT 4.4.0
 #   APScheduler 3.10.4     -> replaces Quartz 2.3.2 scheduler
 #   blinker 1.9.0          -> replaces Guava EventBus
-#   cryptography 44.0.0    -> replaces BouncyCastle 1.78.1
-#   requests 2.32.3        -> replaces Apache HttpClient 4.5.14
+#   cryptography 46.0.5    -> replaces BouncyCastle 1.78.1
+#   requests 2.32.4        -> replaces Apache HttpClient 4.5.14
 #   elasticsearch 7.17.12  -> replaces Java Elasticsearch client
 #   boto3 1.36.7           -> replaces AWS SDK for Java (S3 BlobStore)
-#   python-ldap 3.4.4      -> replaces Shiro LDAP realm
+#   python-ldap 3.4.5      -> replaces Shiro LDAP realm
 # -----------------------------------------------------------------------------
 dependencies = [
     # Core Web Framework
     "Flask==3.1.3",
     "gunicorn==25.1.0",
-    "Werkzeug==3.1.3",
+    "Werkzeug==3.1.6",
 
     # Database and ORM (dual-database: SQLite standalone / PostgreSQL clustered)
     "Flask-SQLAlchemy==3.1.1",
@@ -78,14 +78,14 @@ dependencies = [
     "psycopg2-binary==2.9.10",
 
     # API and Serialization (OpenAPI 3.x auto-generated documentation)
-    "marshmallow==3.23.2",
+    "marshmallow==3.26.2",
     "flask-smorest==0.45.0",
 
     # Authentication and Security (multi-backend: local, API key, JWT, LDAP, SSO)
     "PyJWT==2.10.1",
     "Flask-HTTPAuth==4.8.0",
-    "cryptography==44.0.0",
-    "python-ldap==3.4.4",
+    "cryptography==46.0.5",
+    "python-ldap==3.4.5",
     "bcrypt==4.2.1",
 
     # XML Security (defense-in-depth for Maven metadata parsing)
@@ -106,8 +106,8 @@ dependencies = [
     "prometheus-flask-exporter==0.23.2",
 
     # HTTP and Networking (proxy repository fetches + CORS)
-    "requests==2.32.3",
-    "Flask-CORS==5.0.0",
+    "requests==2.32.4",
+    "Flask-CORS==6.0.0",
 
     # Structured JSON logging for SIEM integration (replaces SLF4J + Logback)
     "python-json-logger==2.0.7",
